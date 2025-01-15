@@ -1,14 +1,18 @@
-import * as path from 'path';
-import * as url from 'url';
 import { BrowserWindow, session, ipcMain, app, WebContents } from 'electron/main';
-import { closeAllWindows } from './lib/window-helpers';
-import { emittedUntil } from './lib/events-helpers';
-import { ifit, ifdescribe, defer, itremote, useRemoteContext, listen } from './lib/spec-helpers';
-import { expect } from 'chai';
-import * as http from 'http';
+
 import * as auth from 'basic-auth';
-import { once } from 'events';
-import { setTimeout } from 'timers/promises';
+import { expect } from 'chai';
+
+import { once } from 'node:events';
+import * as http from 'node:http';
+import * as path from 'node:path';
+import { setTimeout } from 'node:timers/promises';
+import * as url from 'node:url';
+
+import { emittedUntil } from './lib/events-helpers';
+import { HexColors, ScreenCapture, hasCapturableScreen } from './lib/screen-helpers';
+import { ifit, ifdescribe, defer, itremote, useRemoteContext, listen } from './lib/spec-helpers';
+import { closeAllWindows } from './lib/window-helpers';
 
 declare let WebView: any;
 const features = process._linkedBinding('electron_common_features');
@@ -208,7 +212,7 @@ describe('<webview> tag', function () {
           contextIsolation: false
         }
       });
-      const didAttachWebview = once(w.webContents, 'did-attach-webview');
+      const didAttachWebview = once(w.webContents, 'did-attach-webview') as Promise<[any, WebContents]>;
       const webviewDomReady = once(ipcMain, 'webview-dom-ready');
       w.loadFile(path.join(fixtures, 'pages', 'webview-did-attach-event.html'));
 
@@ -249,7 +253,7 @@ describe('<webview> tag', function () {
       });
       await w.loadURL('about:blank');
       const src = url.format({
-        pathname: `${fixtures.replace(/\\/g, '/')}/pages/theme-color.html`,
+        pathname: `${fixtures.replaceAll('\\', '/')}/pages/theme-color.html`,
         protocol: 'file',
         slashes: true
       });
@@ -280,7 +284,9 @@ describe('<webview> tag', function () {
       w.webContents.session.removeExtension('foo');
 
       const extensionPath = path.join(__dirname, 'fixtures', 'devtools-extensions', 'foo');
-      await w.webContents.session.loadExtension(extensionPath);
+      await w.webContents.session.loadExtension(extensionPath, {
+        allowFileAccess: true
+      });
 
       w.loadFile(path.join(__dirname, 'fixtures', 'pages', 'webview-devtools.html'));
       loadWebView(w.webContents, {
@@ -295,10 +301,11 @@ describe('<webview> tag', function () {
           const showPanelIntervalId = setInterval(function () {
             if (!webContents.isDestroyed() && webContents.devToolsWebContents) {
               webContents.devToolsWebContents.executeJavaScript('(' + function () {
-                const { UI } = (window as any);
-                const tabs = UI.inspectorView.tabbedPane.tabs;
+                const { EUI } = (window as any);
+                const instance = EUI.InspectorView.InspectorView.instance();
+                const tabs = instance.tabbedPane.tabs;
                 const lastPanelId: any = tabs[tabs.length - 1].id;
-                UI.inspectorView.showPanel(lastPanelId);
+                instance.showPanel(lastPanelId);
               }.toString() + ')()');
             } else {
               clearInterval(showPanelIntervalId);
@@ -322,8 +329,8 @@ describe('<webview> tag', function () {
 
     before(() => {
       const protocol = webviewSession.protocol;
-      protocol.registerStringProtocol(zoomScheme, (request, callback) => {
-        callback('hello');
+      protocol.registerStringProtocol(zoomScheme, (request, respond) => {
+        respond('hello');
       });
     });
 
@@ -348,6 +355,31 @@ describe('<webview> tag', function () {
       const [, zoomFactor, zoomLevel] = await zoomEventPromise;
       expect(zoomFactor).to.equal(1.2);
       expect(zoomLevel).to.equal(1);
+    });
+
+    it('maintains the zoom level for a given host in the same session after navigation', () => {
+      const w = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true,
+          contextIsolation: false
+        }
+      });
+
+      const zoomPromise = new Promise<void>((resolve) => {
+        ipcMain.on('webview-zoom-persist-level', (_event, values) => {
+          resolve(values);
+        });
+      });
+
+      w.loadFile(path.join(fixtures, 'pages', 'webview-zoom-change-persist-host.html'));
+
+      expect(zoomPromise).to.eventually.deep.equal({
+        initialZoomLevel: 2,
+        switchZoomLevel: 3,
+        finalZoomLevel: 2
+      });
     });
 
     it('maintains zoom level on navigation', async () => {
@@ -434,7 +466,7 @@ describe('<webview> tag', function () {
           contextIsolation: false
         }
       });
-      const attachPromise = once(w.webContents, 'did-attach-webview');
+      const attachPromise = once(w.webContents, 'did-attach-webview') as Promise<[any, WebContents]>;
       const readyPromise = once(ipcMain, 'dom-ready');
       w.loadFile(path.join(fixtures, 'pages', 'webview-zoom-inherited.html'));
       const [, webview] = await attachPromise;
@@ -453,7 +485,7 @@ describe('<webview> tag', function () {
           contextIsolation: false
         }
       });
-      const attachPromise = once(w.webContents, 'did-attach-webview');
+      const attachPromise = once(w.webContents, 'did-attach-webview') as Promise<[any, WebContents]>;
       await w.loadFile(path.join(fixtures, 'pages', 'webview-zoom-inherited.html'));
       await attachPromise;
       await w.webContents.executeJavaScript('view.remove()');
@@ -463,7 +495,7 @@ describe('<webview> tag', function () {
 
   describe('requestFullscreen from webview', () => {
     afterEach(closeAllWindows);
-    const loadWebViewWindow = async () => {
+    async function loadWebViewWindow (): Promise<[BrowserWindow, WebContents]> {
       const w = new BrowserWindow({
         webPreferences: {
           webviewTag: true,
@@ -472,7 +504,7 @@ describe('<webview> tag', function () {
         }
       });
 
-      const attachPromise = once(w.webContents, 'did-attach-webview');
+      const attachPromise = once(w.webContents, 'did-attach-webview') as Promise<[any, WebContents]>;
       const loadPromise = once(w.webContents, 'did-finish-load');
       const readyPromise = once(ipcMain, 'webview-ready');
 
@@ -544,17 +576,16 @@ describe('<webview> tag', function () {
       await close;
     });
 
-    // Sending ESC via sendInputEvent only works on Windows.
-    ifit(process.platform === 'win32')('pressing ESC should unfullscreen window', async () => {
+    it('pressing ESC should unfullscreen window', async () => {
       const [w, webview] = await loadWebViewWindow();
       const enterFullScreen = once(w, 'enter-full-screen');
       await webview.executeJavaScript('document.getElementById("div").requestFullscreen()', true);
       await enterFullScreen;
 
       const leaveFullScreen = once(w, 'leave-full-screen');
-      w.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+      webview.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
       await leaveFullScreen;
-      await setTimeout();
+      await setTimeout(1000);
       expect(w.isFullScreen()).to.be.false();
 
       const close = once(w, 'closed');
@@ -572,7 +603,7 @@ describe('<webview> tag', function () {
         }
       });
 
-      const didAttachWebview = once(w.webContents, 'did-attach-webview');
+      const didAttachWebview = once(w.webContents, 'did-attach-webview') as Promise<[any, WebContents]>;
       w.loadFile(path.join(fixtures, 'pages', 'webview-did-attach-event.html'));
 
       const [, webContents] = await didAttachWebview;
@@ -667,9 +698,9 @@ describe('<webview> tag', function () {
 
       const [, content] = await once(ipcMain, 'answer');
       const expectedContent =
-          'Blocked a frame with origin "file://" from accessing a cross-origin frame.';
+          /Failed to read a named property 'toString' from 'Location': Blocked a frame with origin "(.*?)" from accessing a cross-origin frame./;
 
-      expect(content).to.equal(expectedContent);
+      expect(content).to.match(expectedContent);
     });
 
     it('emits a browser-window-created event', async () => {
@@ -746,6 +777,58 @@ describe('<webview> tag', function () {
     });
   });
 
+  describe('webpreferences attribute', () => {
+    const WINDOW_BACKGROUND_COLOR = '#55ccbb';
+
+    let w: BrowserWindow;
+    before(async () => {
+      w = new BrowserWindow({
+        webPreferences: {
+          webviewTag: true,
+          nodeIntegration: true,
+          contextIsolation: false
+        }
+      });
+      await w.loadURL(`file://${fixtures}/pages/flex-webview.html`);
+      w.setBackgroundColor(WINDOW_BACKGROUND_COLOR);
+    });
+    afterEach(async () => {
+      await w.webContents.executeJavaScript(`{
+        for (const el of document.querySelectorAll('webview')) el.remove();
+      }`);
+    });
+    after(() => w.close());
+
+    ifit(hasCapturableScreen())('is transparent by default', async () => {
+      await loadWebView(w.webContents, {
+        src: 'data:text/html,foo'
+      });
+
+      const screenCapture = new ScreenCapture();
+      await screenCapture.expectColorAtCenterMatches(WINDOW_BACKGROUND_COLOR);
+    });
+
+    ifit(hasCapturableScreen())('remains transparent when set', async () => {
+      await loadWebView(w.webContents, {
+        src: 'data:text/html,foo',
+        webpreferences: 'transparent=yes'
+      });
+
+      const screenCapture = new ScreenCapture();
+      await screenCapture.expectColorAtCenterMatches(WINDOW_BACKGROUND_COLOR);
+    });
+
+    ifit(hasCapturableScreen())('can disable transparency', async () => {
+      await loadWebView(w.webContents, {
+        src: 'data:text/html,foo',
+        webpreferences: 'transparent=no'
+      });
+
+      const screenCapture = new ScreenCapture();
+      await screenCapture.expectColorAtCenterMatches(HexColors.WHITE);
+    });
+  });
+
   describe('permission request handlers', () => {
     let w: BrowserWindow;
     beforeEach(async () => {
@@ -758,12 +841,13 @@ describe('<webview> tag', function () {
 
     function setUpRequestHandler (webContentsId: number, requestedPermission: string) {
       return new Promise<void>((resolve, reject) => {
-        session.fromPartition(partition).setPermissionRequestHandler(function (webContents, permission, callback) {
+        session.fromPartition(partition).setPermissionRequestHandler(function (webContents, permission, allow) {
           if (webContents.id === webContentsId) {
-            // requestMIDIAccess with sysex requests both midi and midiSysex so
-            // grant the first midi one and then reject the midiSysex one
-            if (requestedPermission === 'midiSysex' && permission === 'midi') {
-              return callback(true);
+            // All midi permission requests are blocked or allowed as midiSysex permissions
+            // since https://chromium-review.googlesource.com/c/chromium/src/+/5154368
+            if (permission === 'midiSysex') {
+              const allowed = requestedPermission === 'midi' || requestedPermission === 'midiSysex';
+              return allow(!allowed);
             }
 
             try {
@@ -771,7 +855,7 @@ describe('<webview> tag', function () {
             } catch (e) {
               return reject(e);
             }
-            callback(false);
+            allow(false);
             resolve();
           }
         });
@@ -792,7 +876,7 @@ describe('<webview> tag', function () {
         partition,
         nodeintegration: 'on'
       });
-      const [, webViewContents] = await once(app, 'web-contents-created');
+      const [, webViewContents] = await once(app, 'web-contents-created') as [any, WebContents];
       setUpRequestHandler(webViewContents.id, 'media');
       const [, errorName] = await errorFromRenderer;
       expect(errorName).to.equal('PermissionDeniedError');
@@ -806,7 +890,7 @@ describe('<webview> tag', function () {
         nodeintegration: 'on',
         webpreferences: 'contextIsolation=no'
       });
-      const [, webViewContents] = await once(app, 'web-contents-created');
+      const [, webViewContents] = await once(app, 'web-contents-created') as [any, WebContents];
       setUpRequestHandler(webViewContents.id, 'geolocation');
       const [, error] = await errorFromRenderer;
       expect(error).to.equal('User denied Geolocation');
@@ -820,10 +904,10 @@ describe('<webview> tag', function () {
         nodeintegration: 'on',
         webpreferences: 'contextIsolation=no'
       });
-      const [, webViewContents] = await once(app, 'web-contents-created');
+      const [, webViewContents] = await once(app, 'web-contents-created') as [any, WebContents];
       setUpRequestHandler(webViewContents.id, 'midi');
       const [, error] = await errorFromRenderer;
-      expect(error).to.equal('SecurityError');
+      expect(error).to.equal('NotAllowedError');
     });
 
     it('emits when using navigator.requestMIDIAccess with sysex api', async () => {
@@ -834,10 +918,10 @@ describe('<webview> tag', function () {
         nodeintegration: 'on',
         webpreferences: 'contextIsolation=no'
       });
-      const [, webViewContents] = await once(app, 'web-contents-created');
+      const [, webViewContents] = await once(app, 'web-contents-created') as [any, WebContents];
       setUpRequestHandler(webViewContents.id, 'midiSysex');
       const [, error] = await errorFromRenderer;
-      expect(error).to.equal('SecurityError');
+      expect(error).to.equal('NotAllowedError');
     });
 
     it('emits when accessing external protocol', async () => {
@@ -845,7 +929,7 @@ describe('<webview> tag', function () {
         src: 'magnet:test',
         partition
       });
-      const [, webViewContents] = await once(app, 'web-contents-created');
+      const [, webViewContents] = await once(app, 'web-contents-created') as [any, WebContents];
       await setUpRequestHandler(webViewContents.id, 'openExternal');
     });
 
@@ -857,7 +941,7 @@ describe('<webview> tag', function () {
         nodeintegration: 'on',
         webpreferences: 'contextIsolation=no'
       });
-      const [, webViewContents] = await once(app, 'web-contents-created');
+      const [, webViewContents] = await once(app, 'web-contents-created') as [any, WebContents];
 
       await setUpRequestHandler(webViewContents.id, 'notifications');
 
@@ -927,7 +1011,7 @@ describe('<webview> tag', function () {
     });
     afterEach(async () => {
       await w.executeJavaScript(`{
-        document.querySelectorAll('webview').forEach(el => el.remove())
+        for (const el of document.querySelectorAll('webview')) el.remove();
       }`);
     });
     after(closeAllWindows);
@@ -1409,7 +1493,7 @@ describe('<webview> tag', function () {
     });
     afterEach(async () => {
       await w.executeJavaScript(`{
-        document.querySelectorAll('webview').forEach(el => el.remove())
+        for (const el of document.querySelectorAll('webview')) el.remove();
       }`);
     });
     after(closeAllWindows);
@@ -1616,6 +1700,7 @@ describe('<webview> tag', function () {
         await loadWebViewAndWaitForEvent(w, {
           src: `file://${fixtures}/pages/dom-ready.html?port=${port}`
         }, 'dom-ready');
+        defer(() => { server.close(); });
       });
 
       itremote('throws a custom error when an API method is called before the event is emitted', () => {
@@ -1789,7 +1874,7 @@ describe('<webview> tag', function () {
     });
     afterEach(async () => {
       await w.executeJavaScript(`{
-        document.querySelectorAll('webview').forEach(el => el.remove())
+        for (const el of document.querySelectorAll('webview')) el.remove();
       }`);
     });
     after(closeAllWindows);
@@ -2016,27 +2101,36 @@ describe('<webview> tag', function () {
       }
     });
 
-    // TODO(miniak): figure out why this is failing on windows
-    ifdescribe(process.platform !== 'win32')('<webview>.capturePage()', () => {
-      it('returns a Promise with a NativeImage', async () => {
+    // FIXME: This test is flaking constantly on Linux and macOS.
+    xdescribe('<webview>.capturePage()', () => {
+      it('returns a Promise with a NativeImage', async function () {
+        this.retries(5);
+
         const src = 'data:text/html,%3Ch1%3EHello%2C%20World!%3C%2Fh1%3E';
         await loadWebViewAndWaitForEvent(w, { src }, 'did-stop-loading');
 
-        // Retry a few times due to flake.
-        for (let i = 0; i < 5; i++) {
-          try {
-            const image = await w.executeJavaScript('webview.capturePage()');
-            const imgBuffer = image.toPNG();
+        const image = await w.executeJavaScript('webview.capturePage()');
+        expect(image.isEmpty()).to.be.false();
 
-            // Check the 25th byte in the PNG.
-            // Values can be 0,2,3,4, or 6. We want 6, which is RGB + Alpha
-            expect(imgBuffer[25]).to.equal(6);
-            return;
-          } catch (e) {
-            /* drop the error */
-          }
-        }
-        expect(false).to.be.true('could not successfully capture the page');
+        // Check the 25th byte in the PNG.
+        // Values can be 0,2,3,4, or 6. We want 6, which is RGB + Alpha
+        const imgBuffer = image.toPNG();
+        expect(imgBuffer[25]).to.equal(6);
+      });
+
+      it('returns a Promise with a NativeImage in the renderer', async function () {
+        this.retries(5);
+
+        const src = 'data:text/html,%3Ch1%3EHello%2C%20World!%3C%2Fh1%3E';
+        await loadWebViewAndWaitForEvent(w, { src }, 'did-stop-loading');
+
+        const byte = await w.executeJavaScript(`new Promise(resolve => {
+          webview.capturePage().then(image => {
+            resolve(image.toPNG()[25])
+          });
+        })`);
+
+        expect(byte).to.equal(6);
       });
     });
 
@@ -2086,7 +2180,7 @@ describe('<webview> tag', function () {
     });
     afterEach(async () => {
       await w.executeJavaScript(`{
-        document.querySelectorAll('webview').forEach(el => el.remove())
+        for (const el of document.querySelectorAll('webview')) el.remove();
       }`);
     });
     after(closeAllWindows);

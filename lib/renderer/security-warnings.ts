@@ -1,5 +1,5 @@
-import { ipcRendererInternal } from '@electron/internal/renderer/ipc-renderer-internal';
 import { IPC_MESSAGES } from '@electron/internal/common/ipc-messages';
+import { ipcRendererInternal } from '@electron/internal/renderer/ipc-renderer-internal';
 
 const { mainFrame: webFrame } = process._linkedBinding('electron_renderer_web_frame');
 
@@ -219,7 +219,7 @@ const warnAboutExperimentalFeatures = function (webPreferences?: Electron.WebPre
  */
 const warnAboutEnableBlinkFeatures = function (webPreferences?: Electron.WebPreferences) {
   if (!webPreferences ||
-    !Object.prototype.hasOwnProperty.call(webPreferences, 'enableBlinkFeatures') ||
+    !Object.hasOwn(webPreferences, 'enableBlinkFeatures') ||
     (webPreferences.enableBlinkFeatures != null && webPreferences.enableBlinkFeatures.length === 0)) {
     return;
   }

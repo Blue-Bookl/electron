@@ -16,7 +16,7 @@ namespace electron {
 class RendererClientBase;
 
 // Helper class to forward the messages to the client.
-class ElectronRenderFrameObserver : public content::RenderFrameObserver {
+class ElectronRenderFrameObserver : private content::RenderFrameObserver {
  public:
   ElectronRenderFrameObserver(content::RenderFrame* frame,
                               RendererClientBase* renderer_client);
@@ -26,27 +26,25 @@ class ElectronRenderFrameObserver : public content::RenderFrameObserver {
   ElectronRenderFrameObserver& operator=(const ElectronRenderFrameObserver&) =
       delete;
 
+ private:
   // content::RenderFrameObserver:
   void DidClearWindowObject() override;
-  void DidInstallConditionalFeatures(v8::Handle<v8::Context> context,
+  void DidInstallConditionalFeatures(v8::Local<v8::Context> context,
                                      int world_id) override;
-  void DraggableRegionsChanged() override;
   void WillReleaseScriptContext(v8::Local<v8::Context> context,
                                 int world_id) override;
   void OnDestruct() override;
   void DidMeaningfulLayout(blink::WebMeaningfulLayout layout_type) override;
 
- private:
-  bool ShouldNotifyClient(int world_id);
+  [[nodiscard]] bool ShouldNotifyClient(int world_id) const;
+
   void CreateIsolatedWorldContext();
-  bool IsMainWorld(int world_id);
-  bool IsIsolatedWorld(int world_id);
   void OnTakeHeapSnapshot(IPC::PlatformFileForTransit file_handle,
                           const std::string& channel);
 
   bool has_delayed_node_initialization_ = false;
-  content::RenderFrame* render_frame_;
-  RendererClientBase* renderer_client_;
+  raw_ptr<content::RenderFrame> render_frame_;
+  raw_ptr<RendererClientBase> renderer_client_;
 };
 
 }  // namespace electron

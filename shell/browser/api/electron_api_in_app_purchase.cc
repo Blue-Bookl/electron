@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "gin/handle.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/gin_helper/promise.h"
@@ -20,8 +21,7 @@ struct Converter<in_app_purchase::PaymentDiscount> {
   static v8::Local<v8::Value> ToV8(
       v8::Isolate* isolate,
       const in_app_purchase::PaymentDiscount& paymentDiscount) {
-    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
-    dict.SetHidden("simple", true);
+    auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
     dict.Set("identifier", paymentDiscount.identifier);
     dict.Set("keyIdentifier", paymentDiscount.keyIdentifier);
     dict.Set("nonce", paymentDiscount.nonce);
@@ -35,8 +35,7 @@ template <>
 struct Converter<in_app_purchase::Payment> {
   static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
                                    const in_app_purchase::Payment& payment) {
-    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
-    dict.SetHidden("simple", true);
+    auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
     dict.Set("productIdentifier", payment.productIdentifier);
     dict.Set("quantity", payment.quantity);
     dict.Set("applicationUsername", payment.applicationUsername);
@@ -51,8 +50,7 @@ template <>
 struct Converter<in_app_purchase::Transaction> {
   static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
                                    const in_app_purchase::Transaction& val) {
-    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
-    dict.SetHidden("simple", true);
+    auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
     dict.Set("transactionIdentifier", val.transactionIdentifier);
     dict.Set("transactionDate", val.transactionDate);
     dict.Set("originalTransactionIdentifier",
@@ -71,8 +69,7 @@ struct Converter<in_app_purchase::ProductSubscriptionPeriod> {
       v8::Isolate* isolate,
       const in_app_purchase::ProductSubscriptionPeriod&
           productSubscriptionPeriod) {
-    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
-    dict.SetHidden("simple", true);
+    auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
     dict.Set("numberOfUnits", productSubscriptionPeriod.numberOfUnits);
     dict.Set("unit", productSubscriptionPeriod.unit);
     return dict.GetHandle();
@@ -84,8 +81,7 @@ struct Converter<in_app_purchase::ProductDiscount> {
   static v8::Local<v8::Value> ToV8(
       v8::Isolate* isolate,
       const in_app_purchase::ProductDiscount& productDiscount) {
-    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
-    dict.SetHidden("simple", true);
+    auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
     dict.Set("identifier", productDiscount.identifier);
     dict.Set("type", productDiscount.type);
     dict.Set("price", productDiscount.price);
@@ -104,13 +100,10 @@ template <>
 struct Converter<in_app_purchase::Product> {
   static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
                                    const in_app_purchase::Product& val) {
-    gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
-    dict.SetHidden("simple", true);
+    auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
     dict.Set("productIdentifier", val.productIdentifier);
     dict.Set("localizedDescription", val.localizedDescription);
     dict.Set("localizedTitle", val.localizedTitle);
-    dict.Set("contentVersion", val.contentVersion);
-    dict.Set("contentLengths", val.contentLengths);
 
     // Pricing Information
     dict.Set("price", val.price);

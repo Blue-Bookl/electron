@@ -6,7 +6,6 @@
 #include "shell/browser/microtasks_runner.h"
 
 #include "shell/browser/electron_browser_main_parts.h"
-#include "shell/browser/javascript_environment.h"
 #include "shell/common/node_includes.h"
 #include "v8/include/v8.h"
 
@@ -18,7 +17,6 @@ void MicrotasksRunner::WillProcessTask(const base::PendingTask& pending_task,
                                        bool was_blocked_or_low_priority) {}
 
 void MicrotasksRunner::DidProcessTask(const base::PendingTask& pending_task) {
-  v8::Isolate::Scope scope(isolate_);
   // In the browser process we follow Node.js microtask policy of kExplicit
   // and let the MicrotaskRunner which is a task observer for chromium UI thread
   // scheduler run the microtask checkpoint. This worked fine because Node.js
@@ -26,7 +24,7 @@ void MicrotasksRunner::DidProcessTask(const base::PendingTask& pending_task) {
   // https://github.com/electron/electron/issues/20013 Node.js now performs its
   // own microtask checkpoint and it may happen is some situations that there is
   // contention for performing checkpoint between Node.js and chromium, ending
-  // up Node.js dealying its callbacks. To fix this, now we always lets Node.js
+  // up Node.js delaying its callbacks. To fix this, now we always lets Node.js
   // handle the checkpoint in the browser process.
   {
     v8::HandleScope handle_scope(isolate_);

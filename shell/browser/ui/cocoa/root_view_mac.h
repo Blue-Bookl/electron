@@ -5,6 +5,7 @@
 #ifndef ELECTRON_SHELL_BROWSER_UI_COCOA_ROOT_VIEW_MAC_H_
 #define ELECTRON_SHELL_BROWSER_UI_COCOA_ROOT_VIEW_MAC_H_
 
+#include "base/memory/raw_ptr.h"
 #include "ui/views/view.h"
 
 namespace electron {
@@ -21,13 +22,12 @@ class RootViewMac : public views::View {
   RootViewMac& operator=(const RootViewMac&) = delete;
 
   // views::View:
-  void Layout() override;
   gfx::Size GetMinimumSize() const override;
   gfx::Size GetMaximumSize() const override;
 
  private:
   // Parent window, weak ref.
-  NativeWindow* window_;
+  raw_ptr<NativeWindow> window_;
 };
 
 }  // namespace electron

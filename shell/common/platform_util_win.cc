@@ -6,6 +6,8 @@
 
 #include <windows.h>  // windows.h must be included first
 
+#include "base/win/shlwapi.h"  // NOLINT(build/include_order)
+
 #include <atlbase.h>
 #include <comdef.h>
 #include <commdlg.h>
@@ -20,16 +22,13 @@
 #include "base/functional/bind.h"
 #include "base/functional/callback_helpers.h"
 #include "base/logging.h"
-#include "base/stl_util.h"
 #include "base/strings/escape.h"
-#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/scoped_blocking_call.h"
 #include "base/win/registry.h"
 #include "base/win/scoped_co_mem.h"
 #include "base/win/scoped_com_initializer.h"
-#include "base/win/windows_version.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "shell/common/electron_paths.h"
@@ -47,11 +46,12 @@ class DeleteFileProgressSink : public IFileOperationProgressSink {
   virtual ~DeleteFileProgressSink() = default;
 
  private:
-  ULONG STDMETHODCALLTYPE AddRef(void) override;
-  ULONG STDMETHODCALLTYPE Release(void) override;
+  // IFileOperationProgressSink
+  ULONG STDMETHODCALLTYPE AddRef() override;
+  ULONG STDMETHODCALLTYPE Release() override;
   HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid,
                                            LPVOID* ppvObj) override;
-  HRESULT STDMETHODCALLTYPE StartOperations(void) override;
+  HRESULT STDMETHODCALLTYPE StartOperations() override;
   HRESULT STDMETHODCALLTYPE FinishOperations(HRESULT) override;
   HRESULT STDMETHODCALLTYPE PreRenameItem(DWORD, IShellItem*, LPCWSTR) override;
   HRESULT STDMETHODCALLTYPE
@@ -90,9 +90,9 @@ class DeleteFileProgressSink : public IFileOperationProgressSink {
                                         HRESULT,
                                         IShellItem*) override;
   HRESULT STDMETHODCALLTYPE UpdateProgress(UINT, UINT) override;
-  HRESULT STDMETHODCALLTYPE ResetTimer(void) override;
-  HRESULT STDMETHODCALLTYPE PauseTimer(void) override;
-  HRESULT STDMETHODCALLTYPE ResumeTimer(void) override;
+  HRESULT STDMETHODCALLTYPE ResetTimer() override;
+  HRESULT STDMETHODCALLTYPE PauseTimer() override;
+  HRESULT STDMETHODCALLTYPE ResumeTimer() override;
 
   ULONG m_cRef;
 };
@@ -115,7 +115,7 @@ HRESULT DeleteFileProgressSink::PreDeleteItem(DWORD dwFlags, IShellItem*) {
 }
 
 HRESULT DeleteFileProgressSink::QueryInterface(REFIID riid, LPVOID* ppvObj) {
-  // Always set out parameter to NULL, validating it first.
+  // Always set out parameter to nullptr, validating it first.
   if (!ppvObj)
     return E_INVALIDARG;
   *ppvObj = nullptr;
@@ -283,16 +283,16 @@ void ShowItemInFolderOnWorkerThread(const base::FilePath& full_path) {
     return;
 
   base::win::ScopedCoMem<ITEMIDLIST> dir_item;
-  hr = desktop->ParseDisplayName(NULL, NULL,
+  hr = desktop->ParseDisplayName(nullptr, nullptr,
                                  const_cast<wchar_t*>(dir.value().c_str()),
-                                 NULL, &dir_item, NULL);
+                                 nullptr, &dir_item, nullptr);
   if (FAILED(hr))
     return;
 
   base::win::ScopedCoMem<ITEMIDLIST> file_item;
   hr = desktop->ParseDisplayName(
-      NULL, NULL, const_cast<wchar_t*>(full_path.value().c_str()), NULL,
-      &file_item, NULL);
+      nullptr, nullptr, const_cast<wchar_t*>(full_path.value().c_str()),
+      nullptr, &file_item, nullptr);
   if (FAILED(hr))
     return;
 
@@ -303,7 +303,8 @@ void ShowItemInFolderOnWorkerThread(const base::FilePath& full_path) {
     // found" even though the file is there.  In these cases, ShellExecute()
     // seems to work as a fallback (although it won't select the file).
     if (hr == ERROR_FILE_NOT_FOUND) {
-      ShellExecute(NULL, L"open", dir.value().c_str(), NULL, NULL, SW_SHOW);
+      ShellExecute(nullptr, L"open", dir.value().c_str(), nullptr, nullptr,
+                   SW_SHOW);
     } else {
       LOG(WARNING) << " " << __func__ << "(): Can't open full_path = \""
                    << full_path.value() << "\""
@@ -333,7 +334,8 @@ void ShowItemInFolder(const base::FilePath& full_path) {
   base::ThreadPool::CreateCOMSTATaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_BLOCKING})
       ->PostTask(FROM_HERE,
-                 base::BindOnce(&ShowItemInFolderOnWorkerThread, full_path));
+                 base::BindOnce(&ShowItemInFolderOnWorkerThread,
+                                full_path.NormalizePathSeparators()));
 }
 
 void OpenPath(const base::FilePath& full_path, OpenCallback callback) {
@@ -341,9 +343,11 @@ void OpenPath(const base::FilePath& full_path, OpenCallback callback) {
 
   base::ThreadPool::CreateCOMSTATaskRunner(
       {base::MayBlock(), base::TaskPriority::USER_BLOCKING})
-      ->PostTaskAndReplyWithResult(FROM_HERE,
-                                   base::BindOnce(&OpenPathOnThread, full_path),
-                                   std::move(callback));
+      ->PostTaskAndReplyWithResult(
+          FROM_HERE,
+          base::BindOnce(&OpenPathOnThread,
+                         full_path.NormalizePathSeparators()),
+          std::move(callback));
 }
 
 void OpenExternal(const GURL& url,
@@ -378,7 +382,7 @@ bool MoveItemToTrashWithError(const base::FilePath& path,
 
   // Create an IShellItem from the supplied source path.
   Microsoft::WRL::ComPtr<IShellItem> delete_item;
-  if (FAILED(SHCreateItemFromParsingName(path.value().c_str(), NULL,
+  if (FAILED(SHCreateItemFromParsingName(path.value().c_str(), nullptr,
                                          IID_PPV_ARGS(&delete_item)))) {
     *error = "Failed to parse path";
     return false;
@@ -431,8 +435,8 @@ bool GetFolderPath(int key, base::FilePath* result) {
 
   switch (key) {
     case electron::DIR_RECENT:
-      if (FAILED(SHGetFolderPath(NULL, CSIDL_RECENT, NULL, SHGFP_TYPE_CURRENT,
-                                 system_buffer))) {
+      if (FAILED(SHGetFolderPath(nullptr, CSIDL_RECENT, nullptr,
+                                 SHGFP_TYPE_CURRENT, system_buffer))) {
         return false;
       }
       *result = base::FilePath(system_buffer);

@@ -6,7 +6,6 @@
 #define ELECTRON_SHELL_BROWSER_UI_VIEWS_INSPECTABLE_WEB_CONTENTS_VIEW_VIEWS_H_
 
 #include <memory>
-#include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/memory/raw_ptr.h"
@@ -32,8 +31,8 @@ class InspectableWebContentsViewViews : public InspectableWebContentsView,
 
   // InspectableWebContentsView:
   views::View* GetView() override;
-  views::View* GetWebView() override;
   void ShowDevTools(bool activate) override;
+  void SetCornerRadii(const gfx::RoundedCornersF& corner_radii) override;
   void CloseDevTools() override;
   bool IsDevToolsViewShowing() override;
   bool IsDevToolsViewFocused() override;
@@ -41,16 +40,16 @@ class InspectableWebContentsViewViews : public InspectableWebContentsView,
   void SetContentsResizingStrategy(
       const DevToolsContentsResizingStrategy& strategy) override;
   void SetTitle(const std::u16string& title) override;
+  const std::u16string GetTitle() override;
 
   // views::View:
-  void Layout() override;
-
-  const std::u16string& GetTitle() const { return title_; }
+  void Layout(PassKey) override;
 
  private:
   std::unique_ptr<views::Widget> devtools_window_;
   raw_ptr<views::WebView> devtools_window_web_view_ = nullptr;
-  raw_ptr<views::View> contents_web_view_ = nullptr;
+  raw_ptr<views::WebView> contents_web_view_ = nullptr;
+  raw_ptr<views::View> contents_view_ = nullptr;
   raw_ptr<views::WebView> devtools_web_view_ = nullptr;
 
   DevToolsContentsResizingStrategy strategy_;

@@ -13,17 +13,16 @@ This patch can be removed should we choose to support chrome.fileSystem
 or support it enough to fix the crash.
 
 diff --git a/chrome/browser/resources/pdf/pdf_viewer.ts b/chrome/browser/resources/pdf/pdf_viewer.ts
-index b68423ffe09246ec7ba2935873774c7c452b5952..936ab4b4e12546ca93da27f264559c97f51509ae 100644
+index 62354223a767c9d83e81ec6cc0245545a3106c00..0254aa9033cf3986120f8fc4e965b339f00b3ee7 100644
 --- a/chrome/browser/resources/pdf/pdf_viewer.ts
 +++ b/chrome/browser/resources/pdf/pdf_viewer.ts
-@@ -895,26 +895,12 @@ export class PdfViewerElement extends PdfViewerBaseElement {
+@@ -1093,29 +1093,27 @@ export class PdfViewerElement extends PdfViewerBaseElement {
        dataArray = [result.dataToSave];
      }
  
-+    const a = document.createElement('a');
-+    a.download = this.attachments_[index].name;
-     const blob = new Blob(dataArray);
--    const fileName = this.attachments_[index].name;
+-    const blob = new Blob(dataArray);
+     const fileName = this.attachments_[index].name;
+-    // TODO(crbug.com/373852607): Update to `showSaveFilePicker`.
 -    chrome.fileSystem.chooseEntry(
 -        {type: 'saveFile', suggestedName: fileName},
 -        (entry?: FileSystemFileEntry) => {
@@ -37,50 +36,41 @@ index b68423ffe09246ec7ba2935873774c7c452b5952..936ab4b4e12546ca93da27f264559c97
 -          }
 -          entry!.createWriter((writer: FileWriter) => {
 -            writer.write(blob);
+-            // <if expr="enable_ink">
 -            // Unblock closing the window now that the user has saved
 -            // successfully.
--            chrome.mimeHandlerPrivate.setShowBeforeUnloadDialog(false);
+-            this.setShowBeforeUnloadDialog_(false);
+-            // </if>
 -          });
 -        });
-+    a.href = URL.createObjectURL(blob);
-+    a.click();
-+    URL.revokeObjectURL(a.href);
++    const blob = new Blob(dataArray);
++
++    try {
++      const fileHandle = await window.showSaveFilePicker({
++        suggestedName: fileName,
++      });
++
++      const writable = await fileHandle.createWritable();
++      await writable.write(blob);
++      await writable.close();
++      // <if expr="enable_ink">
++      // Unblock closing the window now that the user has saved
++      // successfully.
++      this.setShowBeforeUnloadDialog_(false);
++      // </if>
++    } catch (error: any) {
++      if (error.name !== 'AbortError') {
++        console.error('window.showSaveFilePicker failed: ' + error);
++      }
++    }
    }
  
    /**
-@@ -1022,30 +1008,12 @@ export class PdfViewerElement extends PdfViewerBaseElement {
+@@ -1306,7 +1304,6 @@ export class PdfViewerElement extends PdfViewerBaseElement {
        fileName = fileName + '.pdf';
      }
  
 -    // Create blob before callback to avoid race condition.
-+    const a = document.createElement('a');
-+    a.download = fileName;
      const blob = new Blob([result.dataToSave], {type: 'application/pdf'});
--    chrome.fileSystem.chooseEntry(
--        {
--          type: 'saveFile',
--          accepts: [{description: '*.pdf', extensions: ['pdf']}],
--          suggestedName: fileName,
--        },
--        (entry?: FileSystemFileEntry) => {
--          if (chrome.runtime.lastError) {
--            if (chrome.runtime.lastError.message !== 'User cancelled') {
--              console.error(
--                  'chrome.fileSystem.chooseEntry failed: ' +
--                  chrome.runtime.lastError.message);
--            }
--            return;
--          }
--          entry!.createWriter((writer: FileWriter) => {
--            writer.write(blob);
--            // Unblock closing the window now that the user has saved
--            // successfully.
--            chrome.mimeHandlerPrivate.setShowBeforeUnloadDialog(false);
--          });
--        });
-+    a.href = URL.createObjectURL(blob);
-+    a.click();
-+    URL.revokeObjectURL(a.href);
- 
-     // <if expr="enable_ink">
-     // Saving in Annotation mode is destructive: crbug.com/919364
+     // TODO(crbug.com/373852607): When  OOPIF PDF is enabled, cross origin
+     // checks block the request for `showSaveFilePicker`. Fix the issue by

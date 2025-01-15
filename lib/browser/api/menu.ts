@@ -1,6 +1,7 @@
-import { BaseWindow, MenuItem, webContents, Menu as MenuType, BrowserWindow, MenuItemConstructorOptions } from 'electron/main';
 import { sortMenuItems } from '@electron/internal/browser/api/menu-utils';
 import { setApplicationMenuWasSet } from '@electron/internal/browser/default-menu';
+
+import { BaseWindow, MenuItem, webContents, Menu as MenuType, MenuItemConstructorOptions } from 'electron/main';
 
 const bindings = process._linkedBinding('electron_browser_menu');
 
@@ -54,7 +55,7 @@ Menu.prototype._executeCommand = function (event, id) {
   const command = this.commandsMap[id];
   if (!command) return;
   const focusedWindow = BaseWindow.getFocusedWindow();
-  command.click(event, focusedWindow instanceof BrowserWindow ? focusedWindow : undefined, webContents.getFocusedWebContents());
+  command.click(event, focusedWindow, webContents.getFocusedWebContents());
 };
 
 Menu.prototype._menuWillShow = function () {
@@ -69,7 +70,7 @@ Menu.prototype.popup = function (options = {}) {
   if (options == null || typeof options !== 'object') {
     throw new TypeError('Options must be an object');
   }
-  let { window, x, y, positioningItem, callback } = options;
+  let { window, x, y, positioningItem, sourceType, callback } = options;
 
   // no callback passed
   if (!callback || typeof callback !== 'function') callback = () => {};
@@ -78,10 +79,11 @@ Menu.prototype.popup = function (options = {}) {
   if (typeof x !== 'number') x = -1;
   if (typeof y !== 'number') y = -1;
   if (typeof positioningItem !== 'number') positioningItem = -1;
+  if (typeof sourceType !== 'string' || !sourceType) sourceType = 'mouse';
 
   // find which window to use
   const wins = BaseWindow.getAllWindows();
-  if (!wins || wins.indexOf(window as any) === -1) {
+  if (!wins || !wins.includes(window as any)) {
     window = BaseWindow.getFocusedWindow() as any;
     if (!window && wins && wins.length > 0) {
       window = wins[0] as any;
@@ -91,7 +93,7 @@ Menu.prototype.popup = function (options = {}) {
     }
   }
 
-  this.popupAt(window as unknown as BaseWindow, x, y, positioningItem, callback);
+  this.popupAt(window as unknown as BaseWindow, x, y, positioningItem, sourceType, callback);
   return { browserWindow: window, x, y, position: positioningItem };
 };
 
@@ -152,9 +154,9 @@ Menu.prototype.insert = function (pos, item) {
 
 Menu.prototype._callMenuWillShow = function () {
   if (this.delegate) this.delegate.menuWillShow(this);
-  this.items.forEach(item => {
+  for (const item of this.items) {
     if (item.submenu) item.submenu._callMenuWillShow();
-  });
+  }
 };
 
 /* Static Methods */
@@ -195,13 +197,13 @@ Menu.buildFromTemplate = function (template) {
   const filtered = removeExtraSeparators(sorted);
 
   const menu = new Menu();
-  filtered.forEach(item => {
+  for (const item of filtered) {
     if (item instanceof MenuItem) {
       menu.append(item);
     } else {
       menu.append(new MenuItem(item));
     }
-  });
+  }
 
   return menu;
 };
@@ -213,9 +215,7 @@ function areValidTemplateItems (template: (MenuItemConstructorOptions | MenuItem
   return template.every(item =>
     item != null &&
     typeof item === 'object' &&
-    (Object.prototype.hasOwnProperty.call(item, 'label') ||
-     Object.prototype.hasOwnProperty.call(item, 'role') ||
-     item.type === 'separator'));
+    (Object.hasOwn(item, 'label') || Object.hasOwn(item, 'role') || item.type === 'separator'));
 }
 
 function sortTemplate (template: (MenuItemConstructorOptions | MenuItem)[]) {
@@ -281,9 +281,9 @@ function insertItemByType (this: MenuType, item: MenuItem, pos: number) {
         enumerable: true,
         get: () => checked.get(item),
         set: () => {
-          this.groupsMap[item.groupId].forEach(other => {
+          for (const other of this.groupsMap[item.groupId]) {
             if (other !== item) checked.set(other, false);
-          });
+          }
           checked.set(item, true);
         }
       });

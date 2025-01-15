@@ -6,35 +6,38 @@
 #define ELECTRON_SHELL_BROWSER_HID_HID_CHOOSER_CONTEXT_H_
 
 #include <map>
-#include <memory>
 #include <set>
 #include <string>
-#include <utility>
+#include <string_view>
 #include <vector>
 
 #include "base/containers/queue.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
-#include "base/unguessable_token.h"
+#include "base/observer_list_types.h"
+#include "base/scoped_observation_traits.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "content/public/browser/web_contents.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
-#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/hid.mojom.h"
-#include "shell/browser/electron_browser_context.h"
 #include "url/origin.h"
 
 namespace base {
 class Value;
 }
 
+namespace mojo {
+template <typename T>
+class PendingRemote;
+}  // namespace mojo
+
 namespace electron {
 
-extern const char kHidDeviceNameKey[];
-extern const char kHidGuidKey[];
-extern const char kHidProductIdKey[];
+class ElectronBrowserContext;
+
+inline constexpr std::string_view kHidDeviceNameKey = "name";
+inline constexpr std::string_view kHidGuidKey = "guid";
 
 // Manages the internal state and connection to the device service for the
 // Human Interface Device (HID) chooser UI.
@@ -78,6 +81,9 @@ class HidChooserContext : public KeyedService,
                               const device::mojom::HidDeviceInfo& device);
   bool HasDevicePermission(const url::Origin& origin,
                            const device::mojom::HidDeviceInfo& device);
+
+  // Returns true if `origin` is allowed to access FIDO reports.
+  bool IsFidoAllowedForOrigin(const url::Origin& origin);
 
   // For ScopedObserver.
   void AddDeviceObserver(DeviceObserver* observer);
@@ -139,5 +145,24 @@ class HidChooserContext : public KeyedService,
 };
 
 }  // namespace electron
+
+namespace base {
+
+template <>
+struct ScopedObservationTraits<electron::HidChooserContext,
+                               electron::HidChooserContext::DeviceObserver> {
+  static void AddObserver(
+      electron::HidChooserContext* source,
+      electron::HidChooserContext::DeviceObserver* observer) {
+    source->AddDeviceObserver(observer);
+  }
+  static void RemoveObserver(
+      electron::HidChooserContext* source,
+      electron::HidChooserContext::DeviceObserver* observer) {
+    source->RemoveDeviceObserver(observer);
+  }
+};
+
+}  // namespace base
 
 #endif  // ELECTRON_SHELL_BROWSER_HID_HID_CHOOSER_CONTEXT_H_

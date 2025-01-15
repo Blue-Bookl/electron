@@ -19,10 +19,10 @@ that clearly establishes the worker script is ready for evaluation with the scop
 initialized.
 
 diff --git a/content/public/renderer/content_renderer_client.h b/content/public/renderer/content_renderer_client.h
-index 13815369562c1f78c2411cde8e14d9e8795eff38..42a3226c270b39658306db0b39df24b891086b21 100644
+index 07c014a28ed1ef5878a50fbb194e38fe762361e9..ae4c9c011024a32354a4cc25c63835a48d1792dd 100644
 --- a/content/public/renderer/content_renderer_client.h
 +++ b/content/public/renderer/content_renderer_client.h
-@@ -371,6 +371,11 @@ class CONTENT_EXPORT ContentRendererClient {
+@@ -417,6 +417,11 @@ class CONTENT_EXPORT ContentRendererClient {
    virtual void DidInitializeWorkerContextOnWorkerThread(
        v8::Local<v8::Context> context) {}
  
@@ -35,10 +35,10 @@ index 13815369562c1f78c2411cde8e14d9e8795eff38..42a3226c270b39658306db0b39df24b8
    // from the worker thread.
    virtual void WillDestroyWorkerContextOnWorkerThread(
 diff --git a/content/renderer/renderer_blink_platform_impl.cc b/content/renderer/renderer_blink_platform_impl.cc
-index 696ad0eac2b187517ad737ec733a4bae2a0993f0..aa08e6c2b754b405f847c233b9d83ae08384754b 100644
+index 86684e38d8cb84889c090576ab7f0f0e05b5c2b6..33977bfee6ded55f37ad58bc43bae4cf17c59ea3 100644
 --- a/content/renderer/renderer_blink_platform_impl.cc
 +++ b/content/renderer/renderer_blink_platform_impl.cc
-@@ -825,6 +825,12 @@ void RendererBlinkPlatformImpl::WorkerContextCreated(
+@@ -899,6 +899,12 @@ void RendererBlinkPlatformImpl::WorkerContextCreated(
        worker);
  }
  
@@ -52,10 +52,10 @@ index 696ad0eac2b187517ad737ec733a4bae2a0993f0..aa08e6c2b754b405f847c233b9d83ae0
      const blink::WebSecurityOrigin& script_origin) {
    return GetContentClient()->renderer()->AllowScriptExtensionForServiceWorker(
 diff --git a/content/renderer/renderer_blink_platform_impl.h b/content/renderer/renderer_blink_platform_impl.h
-index 1ba3b8a4b85a274e3f53968f4f68766796440555..c9dfaab647d191dba58da5bb95ba1ab703115b05 100644
+index 54cebcbc49875287b5ae008b14e7df515f31a2d5..c501ef55d85e9743dd7e0f6bcddfa3de2c155146 100644
 --- a/content/renderer/renderer_blink_platform_impl.h
 +++ b/content/renderer/renderer_blink_platform_impl.h
-@@ -175,6 +175,8 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
+@@ -196,6 +196,8 @@ class CONTENT_EXPORT RendererBlinkPlatformImpl : public BlinkPlatformImpl {
    void DidStartWorkerThread() override;
    void WillStopWorkerThread() override;
    void WorkerContextCreated(const v8::Local<v8::Context>& worker) override;
@@ -65,10 +65,10 @@ index 1ba3b8a4b85a274e3f53968f4f68766796440555..c9dfaab647d191dba58da5bb95ba1ab7
    bool AllowScriptExtensionForServiceWorker(
        const blink::WebSecurityOrigin& script_origin) override;
 diff --git a/third_party/blink/public/platform/platform.h b/third_party/blink/public/platform/platform.h
-index 77c31b107cb0786248510e64f019cdb92b4fb4af..80f05e60b3f18da708840804501b69328c95a083 100644
+index 38c6e96ac42ff064cb337a4edb493ecf95bd6820..1bfd7a66d38e01fa173e02c656495e5ba674fa80 100644
 --- a/third_party/blink/public/platform/platform.h
 +++ b/third_party/blink/public/platform/platform.h
-@@ -621,6 +621,8 @@ class BLINK_PLATFORM_EXPORT Platform {
+@@ -662,6 +662,8 @@ class BLINK_PLATFORM_EXPORT Platform {
    virtual void DidStartWorkerThread() {}
    virtual void WillStopWorkerThread() {}
    virtual void WorkerContextCreated(const v8::Local<v8::Context>& worker) {}
@@ -78,10 +78,10 @@ index 77c31b107cb0786248510e64f019cdb92b4fb4af..80f05e60b3f18da708840804501b6932
    virtual bool AllowScriptExtensionForServiceWorker(
        const WebSecurityOrigin& script_origin) {
 diff --git a/third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc b/third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc
-index 89c59263ebd8fa078cc2110a9915322d265d075b..1715745c392ee99a1bfca1b29dd0f832b6b6b568 100644
+index cb62ef39250ef824e5a3793cdbacc1edfab1648e..3b66d1f28e79a5ddbcd18dbab57eb347480bd7c6 100644
 --- a/third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc
 +++ b/third_party/blink/renderer/bindings/core/v8/worker_or_worklet_script_controller.cc
-@@ -262,6 +262,7 @@ void WorkerOrWorkletScriptController::PrepareForEvaluation() {
+@@ -303,6 +303,7 @@ void WorkerOrWorkletScriptController::PrepareForEvaluation() {
    V8PerContextData* per_context_data = script_state_->PerContextData();
    std::ignore =
        per_context_data->ConstructorForType(global_scope_->GetWrapperTypeInfo());

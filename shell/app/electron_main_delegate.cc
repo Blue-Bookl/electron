@@ -7,6 +7,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "base/apple/bundle_locations.h"
@@ -17,7 +18,6 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/path_service.h"
-#include "base/strings/string_split.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
@@ -25,6 +25,7 @@
 #include "content/public/common/content_switches.h"
 #include "electron/buildflags/buildflags.h"
 #include "electron/fuses.h"
+#include "electron/mas.h"
 #include "extensions/common/constants.h"
 #include "ipc/ipc_buildflags.h"
 #include "sandbox/policy/switches.h"
@@ -78,11 +79,11 @@ namespace electron {
 
 namespace {
 
-const char kRelauncherProcess[] = "relauncher";
+constexpr std::string_view kRelauncherProcess = "relauncher";
 
-constexpr base::StringPiece kElectronDisableSandbox("ELECTRON_DISABLE_SANDBOX");
-constexpr base::StringPiece kElectronEnableStackDumping(
-    "ELECTRON_ENABLE_STACK_DUMPING");
+constexpr std::string_view kElectronDisableSandbox{"ELECTRON_DISABLE_SANDBOX"};
+constexpr std::string_view kElectronEnableStackDumping{
+    "ELECTRON_ENABLE_STACK_DUMPING"};
 
 // Returns true if this subprocess type needs the ResourceBundle initialized
 // and resources loaded.
@@ -97,7 +98,6 @@ bool SubprocessNeedsResourceBundle(const std::string& process_type) {
       // profiles.
       process_type == ::switches::kGpuProcess ||
 #endif
-      process_type == ::switches::kPpapiPluginProcess ||
       process_type == ::switches::kRendererProcess ||
       process_type == ::switches::kUtilityProcess;
 }
@@ -238,7 +238,7 @@ const char* const ElectronMainDelegate::kNonWildcardDomainNonPortSchemes[] = {
 const size_t ElectronMainDelegate::kNonWildcardDomainNonPortSchemesSize =
     std::size(kNonWildcardDomainNonPortSchemes);
 
-absl::optional<int> ElectronMainDelegate::BasicStartupComplete() {
+std::optional<int> ElectronMainDelegate::BasicStartupComplete() {
   auto* command_line = base::CommandLine::ForCurrentProcess();
 
 #if BUILDFLAG(IS_WIN)
@@ -269,12 +269,6 @@ absl::optional<int> ElectronMainDelegate::BasicStartupComplete() {
 #if BUILDFLAG(ENABLE_ELECTRON_EXTENSIONS)
   ContentSettingsPattern::SetNonWildcardDomainNonPortSchemes(
       kNonWildcardDomainNonPortSchemes, kNonWildcardDomainNonPortSchemesSize);
-#endif
-
-#if BUILDFLAG(IS_MAC)
-  OverrideChildProcessPath();
-  OverrideFrameworkBundlePath();
-  SetUpBundleOverrides();
 #endif
 
 #if BUILDFLAG(IS_WIN)
@@ -311,7 +305,7 @@ absl::optional<int> ElectronMainDelegate::BasicStartupComplete() {
       ::switches::kDisableGpuMemoryBufferCompositorResources);
 #endif
 
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 void ElectronMainDelegate::PreSandboxStartup() {
@@ -398,7 +392,7 @@ void ElectronMainDelegate::SandboxInitialized(const std::string& process_type) {
 #endif
 }
 
-absl::optional<int> ElectronMainDelegate::PreBrowserMain() {
+std::optional<int> ElectronMainDelegate::PreBrowserMain() {
   // This is initialized early because the service manager reads some feature
   // flags and we need to make sure the feature list is initialized before the
   // service manager reads the features.
@@ -408,10 +402,15 @@ absl::optional<int> ElectronMainDelegate::PreBrowserMain() {
 #if BUILDFLAG(IS_MAC)
   RegisterAtomCrApp();
 #endif
-  return absl::nullopt;
+#if BUILDFLAG(IS_LINUX)
+  // Set the global activation token sent as an environment variable.
+  auto env = base::Environment::Create();
+  base::nix::ExtractXdgActivationTokenFromEnv(*env);
+#endif
+  return std::nullopt;
 }
 
-base::StringPiece ElectronMainDelegate::GetBrowserV8SnapshotFilename() {
+std::string_view ElectronMainDelegate::GetBrowserV8SnapshotFilename() {
   bool load_browser_process_specific_v8_snapshot =
       IsBrowserProcess() &&
       electron::fuses::IsLoadBrowserProcessSpecificV8SnapshotEnabled();

@@ -7,6 +7,7 @@
 
 #include "base/process/kill.h"
 #include "gin/converter.h"
+#include "shell/common/gin_converters/std_converter.h"
 
 namespace gin {
 
@@ -35,10 +36,8 @@ struct Converter<base::TerminationStatus> {
 #endif
       case base::TERMINATION_STATUS_MAX_ENUM:
         NOTREACHED();
-        return gin::ConvertToV8(isolate, "");
     }
     NOTREACHED();
-    return gin::ConvertToV8(isolate, "");
   }
 };
 

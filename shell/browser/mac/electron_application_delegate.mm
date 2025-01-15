@@ -4,27 +4,24 @@
 
 #import "shell/browser/mac/electron_application_delegate.h"
 
-#include <memory>
 #include <string>
 
 #include "base/allocator/buildflags.h"
-#include "base/allocator/partition_allocator/shim/allocator_shim.h"
+#include "base/allocator/partition_allocator/src/partition_alloc/shim/allocator_shim.h"
+#include "base/functional/callback.h"
 #include "base/mac/mac_util.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/values.h"
 #include "shell/browser/api/electron_api_push_notifications.h"
 #include "shell/browser/browser.h"
 #include "shell/browser/mac/dict_util.h"
 #import "shell/browser/mac/electron_application.h"
+#include "shell/common/mac_util.h"
 
 #import <UserNotifications/UserNotifications.h>
 
-#if !defined(__has_feature) || !__has_feature(objc_arc)
-#error "This file requires ARC support."
-#endif
-
 static NSDictionary* UNNotificationResponseToNSDictionary(
-    UNNotificationResponse* response) API_AVAILABLE(macosx(10.14)) {
+    UNNotificationResponse* response) {
   if (![response respondsToSelector:@selector(actionIdentifier)] ||
       ![response respondsToSelector:@selector(notification)]) {
     return nil;
@@ -73,6 +70,11 @@ static NSDictionary* UNNotificationResponseToNSDictionary(
   electron::Browser::Get()->WillFinishLaunching();
 }
 
+// NSUserNotification is deprecated; all calls should be replaced with
+// UserNotifications.frameworks API
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+
 - (void)applicationDidFinishLaunching:(NSNotification*)notify {
   NSObject* user_notification =
       [notify userInfo][NSApplicationLaunchUserNotificationKey];
@@ -82,15 +84,26 @@ static NSDictionary* UNNotificationResponseToNSDictionary(
     if ([user_notification isKindOfClass:[NSUserNotification class]]) {
       notification_info =
           [static_cast<NSUserNotification*>(user_notification) userInfo];
-    } else if (@available(macOS 10.14, *)) {
+    } else {
       notification_info = UNNotificationResponseToNSDictionary(
           static_cast<UNNotificationResponse*>(user_notification));
     }
   }
 
+  NSAppleEventDescriptor* event =
+      NSAppleEventManager.sharedAppleEventManager.currentAppleEvent;
+  BOOL launched_as_login_item =
+      (event.eventID == kAEOpenApplication &&
+       [event paramDescriptorForKeyword:keyAEPropData].enumCodeValue ==
+           keyAELaunchedAsLogInItem);
+  electron::Browser::Get()->SetLaunchedAtLogin(launched_as_login_item);
+
   electron::Browser::Get()->DidFinishLaunching(
       electron::NSDictionaryToValue(notification_info));
 }
+
+// -Wdeprecated-declarations
+#pragma clang diagnostic pop
 
 - (void)applicationDidBecomeActive:(NSNotification*)notification {
   electron::Browser::Get()->DidBecomeActive();
@@ -165,18 +178,10 @@ static NSDictionary* UNNotificationResponseToNSDictionary(
 
 - (void)application:(NSApplication*)application
     didRegisterForRemoteNotificationsWithDeviceToken:(NSData*)deviceToken {
-  // https://stackoverflow.com/a/16411517
-  const char* token_data = static_cast<const char*>(deviceToken.bytes);
-  NSMutableString* token_string = [NSMutableString string];
-  for (NSUInteger i = 0; i < deviceToken.length; i++) {
-    [token_string appendFormat:@"%02.2hhX", token_data[i]];
-  }
   // Resolve outstanding APNS promises created during registration attempts
-  electron::api::PushNotifications* push_notifications =
-      electron::api::PushNotifications::Get();
-  if (push_notifications) {
+  if (auto* push_notifications = electron::api::PushNotifications::Get()) {
     push_notifications->ResolveAPNSPromiseSetWithToken(
-        base::SysNSStringToUTF8(token_string));
+        base::HexEncode(electron::util::as_byte_span(deviceToken)));
   }
 }
 
@@ -200,6 +205,14 @@ static NSDictionary* UNNotificationResponseToNSDictionary(
     electron::api::PushNotifications::Get()->OnDidReceiveAPNSNotification(
         electron::NSDictionaryToValue(userInfo));
   }
+}
+
+// This only has an effect on macOS 12+, and requests any state restoration
+// archive to be created with secure encoding. See the article at
+// https://sector7.computest.nl/post/2022-08-process-injection-breaking-all-macos-security-layers-with-a-single-vulnerability/
+// for more details.
+- (BOOL)applicationSupportsSecureRestorableState:(NSApplication*)app {
+  return YES;
 }
 
 @end

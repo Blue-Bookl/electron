@@ -1,0 +1,128 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Calvin Watford <cwatford@slack-corp.com>
+Date: Thu, 28 Mar 2024 14:28:19 -0600
+Subject: fix: remove deprecated errno constants
+
+Various errno constants were deprecated by POSIX. libc++ added deprecation markers on these constants.
+
+This change removes the usage of these constants to fix a compilation failure due to mappings of those constants. This patch should be upstreamed to node/libuv.
+
+See: https://github.com/llvm/llvm-project/pull/80542
+
+diff --git a/deps/uv/include/uv.h b/deps/uv/include/uv.h
+index 7f48b7daa87d1a5b14bc6f641b60f21263fa5ec3..0be470c9139a6da19414295a59f1a237cc3a50d7 100644
+--- a/deps/uv/include/uv.h
++++ b/deps/uv/include/uv.h
+@@ -155,7 +155,6 @@ struct uv__queue {
+   XX(EFTYPE, "inappropriate file type or format")                             \
+   XX(EILSEQ, "illegal byte sequence")                                         \
+   XX(ESOCKTNOSUPPORT, "socket type not supported")                            \
+-  XX(ENODATA, "no data available")                                            \
+   XX(EUNATCH, "protocol driver not attached")                                 \
+ 
+ #define UV_HANDLE_TYPE_MAP(XX)                                                \
+diff --git a/deps/uv/include/uv/errno.h b/deps/uv/include/uv/errno.h
+index 127278ef916161a96e23e645927d16bedfdaca5b..b36da3daa5744e6f994e32d9d82aaef689008a5f 100644
+--- a/deps/uv/include/uv/errno.h
++++ b/deps/uv/include/uv/errno.h
+@@ -456,18 +456,6 @@
+ # define UV__ESOCKTNOSUPPORT (-4025)
+ #endif
+ 
+-/* FreeBSD defines ENODATA in /usr/include/c++/v1/errno.h which is only visible
+- * if C++ is being used. Define it directly to avoid problems when integrating
+- * libuv in a C++ project.
+- */
+-#if defined(ENODATA) && !defined(_WIN32)
+-# define UV__ENODATA UV__ERR(ENODATA)
+-#elif defined(__FreeBSD__)
+-# define UV__ENODATA (-9919)
+-#else
+-# define UV__ENODATA (-4024)
+-#endif
+-
+ #if defined(EUNATCH) && !defined(_WIN32)
+ # define UV__EUNATCH UV__ERR(EUNATCH)
+ #else
+diff --git a/src/node_constants.cc b/src/node_constants.cc
+index 149c7c107322919dfeea1dfe89dc223f78b0e979..e4e8dac6b8b5924a7eae83935031e09142554747 100644
+--- a/src/node_constants.cc
++++ b/src/node_constants.cc
+@@ -241,10 +241,6 @@ void DefineErrnoConstants(Local<Object> target) {
+   NODE_DEFINE_CONSTANT(target, ENOBUFS);
+ #endif
+ 
+-#ifdef ENODATA
+-  NODE_DEFINE_CONSTANT(target, ENODATA);
+-#endif
+-
+ #ifdef ENODEV
+   NODE_DEFINE_CONSTANT(target, ENODEV);
+ #endif
+@@ -281,14 +277,6 @@ void DefineErrnoConstants(Local<Object> target) {
+   NODE_DEFINE_CONSTANT(target, ENOSPC);
+ #endif
+ 
+-#ifdef ENOSR
+-  NODE_DEFINE_CONSTANT(target, ENOSR);
+-#endif
+-
+-#ifdef ENOSTR
+-  NODE_DEFINE_CONSTANT(target, ENOSTR);
+-#endif
+-
+ #ifdef ENOSYS
+   NODE_DEFINE_CONSTANT(target, ENOSYS);
+ #endif
+@@ -369,10 +357,6 @@ void DefineErrnoConstants(Local<Object> target) {
+   NODE_DEFINE_CONSTANT(target, ESTALE);
+ #endif
+ 
+-#ifdef ETIME
+-  NODE_DEFINE_CONSTANT(target, ETIME);
+-#endif
+-
+ #ifdef ETIMEDOUT
+   NODE_DEFINE_CONSTANT(target, ETIMEDOUT);
+ #endif
+diff --git a/src/node_errors.cc b/src/node_errors.cc
+index 65f95c3157add2afca26a133183b65ccba6e9924..81091d364d32094dc91c7abb0c5fe9963d100a8b 100644
+--- a/src/node_errors.cc
++++ b/src/node_errors.cc
+@@ -857,10 +857,6 @@ const char* errno_string(int errorno) {
+     ERRNO_CASE(ENOBUFS);
+ #endif
+ 
+-#ifdef ENODATA
+-    ERRNO_CASE(ENODATA);
+-#endif
+-
+ #ifdef ENODEV
+     ERRNO_CASE(ENODEV);
+ #endif
+@@ -899,14 +895,6 @@ const char* errno_string(int errorno) {
+     ERRNO_CASE(ENOSPC);
+ #endif
+ 
+-#ifdef ENOSR
+-    ERRNO_CASE(ENOSR);
+-#endif
+-
+-#ifdef ENOSTR
+-    ERRNO_CASE(ENOSTR);
+-#endif
+-
+ #ifdef ENOSYS
+     ERRNO_CASE(ENOSYS);
+ #endif
+@@ -989,10 +977,6 @@ const char* errno_string(int errorno) {
+     ERRNO_CASE(ESTALE);
+ #endif
+ 
+-#ifdef ETIME
+-    ERRNO_CASE(ETIME);
+-#endif
+-
+ #ifdef ETIMEDOUT
+     ERRNO_CASE(ETIMEDOUT);
+ #endif

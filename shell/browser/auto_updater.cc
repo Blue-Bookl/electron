@@ -4,6 +4,9 @@
 
 #include "shell/browser/auto_updater.h"
 
+#include "build/build_config.h"
+#include "electron/mas.h"
+
 namespace auto_updater {
 
 Delegate* AutoUpdater::delegate_ = nullptr;
@@ -26,6 +29,11 @@ void AutoUpdater::SetFeedURL(gin::Arguments* args) {}
 void AutoUpdater::CheckForUpdates() {}
 
 void AutoUpdater::QuitAndInstall() {}
+
+bool AutoUpdater::IsVersionAllowedForUpdate(const std::string& current_version,
+                                            const std::string& target_version) {
+  return false;
+}
 #endif
 
 }  // namespace auto_updater

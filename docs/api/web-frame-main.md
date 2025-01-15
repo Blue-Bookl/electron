@@ -8,7 +8,7 @@ The `webFrameMain` module can be used to lookup frames across existing
 [`WebContents`](web-contents.md) instances. Navigation events are the common
 use case.
 
-```javascript
+```js
 const { BrowserWindow, webFrameMain } = require('electron')
 
 const win = new BrowserWindow({ width: 800, height: 1500 })
@@ -29,7 +29,7 @@ win.webContents.on(
 You can also access frames of existing pages by using the `mainFrame` property
 of [`WebContents`](web-contents.md).
 
-```javascript
+```js
 const { BrowserWindow } = require('electron')
 
 async function main () {
@@ -97,16 +97,19 @@ this limitation.
 
 Returns `boolean` - Whether the reload was initiated successfully. Only results in `false` when the frame has no history.
 
+#### `frame.isDestroyed()`
+
+Returns `boolean` - Whether the frame is destroyed.
+
 #### `frame.send(channel, ...args)`
 
 * `channel` string
 * `...args` any[]
 
 Send an asynchronous message to the renderer process via `channel`, along with
-arguments. Arguments will be serialized with the [Structured Clone
-Algorithm][SCA], just like [`postMessage`][], so prototype chains will not be
-included. Sending Functions, Promises, Symbols, WeakMaps, or WeakSets will
-throw an exception.
+arguments. Arguments will be serialized with the [Structured Clone Algorithm][SCA],
+just like [`postMessage`][], so prototype chains will not be included.
+Sending Functions, Promises, Symbols, WeakMaps, or WeakSets will throw an exception.
 
 The renderer process can handle the message by listening to `channel` with the
 [`ipcRenderer`](ipc-renderer.md) module.
@@ -136,6 +139,29 @@ win.webContents.mainFrame.postMessage('port', { message: 'hello' }, [port1])
 ipcRenderer.on('port', (e, msg) => {
   const [port] = e.ports
   // ...
+})
+```
+
+#### `frame.collectJavaScriptCallStack()` _Experimental_
+
+Returns `Promise<string> | Promise<void>` - A promise that resolves with the currently running JavaScript call
+stack. If no JavaScript runs in the frame, the promise will never resolve. In cases where the call stack is
+otherwise unable to be collected, it will return `undefined`.
+
+This can be useful to determine why the frame is unresponsive in cases where there's long-running JavaScript.
+For more information, see the [proposed Crash Reporting API.](https://wicg.github.io/crash-reporting/)
+
+```js
+const { app } = require('electron')
+
+app.commandLine.appendSwitch('enable-features', 'DocumentPolicyIncludeJSCallStacksInCrashReports')
+
+app.on('web-contents-created', (_, webContents) => {
+  webContents.on('unresponsive', async () => {
+    // Interrupt execution and collect call stack from unresponsive renderer
+    const callStack = await webContents.mainFrame.collectJavaScriptCallStack()
+    console.log('Renderer unresponsive\n', callStack)
+  })
 })
 ```
 
@@ -232,6 +258,13 @@ A `string` representing the [visibility state](https://developer.mozilla.org/en-
 
 See also how the [Page Visibility API](browser-window.md#page-visibility) is affected by other Electron APIs.
 
+#### `frame.detached` _Readonly_
+
+A `Boolean` representing whether the frame is detached from the frame tree. If a frame is accessed
+while the corresponding page is running any [unload][] listeners, it may become detached as the
+newly navigated page replaced it in the frame tree.
+
 [SCA]: https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm
 [`postMessage`]: https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage
 [`MessagePortMain`]: message-port-main.md
+[unload]: https://developer.mozilla.org/en-US/docs/Web/API/Window/unload_event

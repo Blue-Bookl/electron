@@ -6,28 +6,32 @@
 #define ELECTRON_SHELL_BROWSER_USB_USB_CHOOSER_CONTEXT_H_
 
 #include <map>
-#include <memory>
 #include <set>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "base/containers/queue.h"
 #include "base/memory/raw_ptr.h"
 #include "base/observer_list.h"
+#include "base/observer_list_types.h"
 #include "base/values.h"
-#include "build/build_config.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "mojo/public/cpp/bindings/associated_receiver.h"
-#include "mojo/public/cpp/bindings/pending_receiver.h"
-#include "mojo/public/cpp/bindings/pending_remote.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/usb_manager.mojom.h"
 #include "services/device/public/mojom/usb_manager_client.mojom.h"
-#include "shell/browser/electron_browser_context.h"
 #include "url/origin.h"
 
+namespace mojo {
+template <typename T>
+class PendingReceiver;
+template <typename T>
+class PendingRemote;
+}  // namespace mojo
+
 namespace electron {
+
+class ElectronBrowserContext;
 
 class UsbChooserContext : public KeyedService,
                           public device::mojom::UsbDeviceManagerClient {
@@ -43,9 +47,9 @@ class UsbChooserContext : public KeyedService,
   // connected.
   class DeviceObserver : public base::CheckedObserver {
    public:
-    virtual void OnDeviceAdded(const device::mojom::UsbDeviceInfo&);
-    virtual void OnDeviceRemoved(const device::mojom::UsbDeviceInfo&);
-    virtual void OnDeviceManagerConnectionError();
+    virtual void OnDeviceAdded(const device::mojom::UsbDeviceInfo&) {}
+    virtual void OnDeviceRemoved(const device::mojom::UsbDeviceInfo&) {}
+    virtual void OnDeviceManagerConnectionError() {}
 
     // Called when the BrowserContext is shutting down. Observers must remove
     // themselves before returning.

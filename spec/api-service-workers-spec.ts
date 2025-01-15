@@ -1,11 +1,14 @@
-import * as fs from 'fs';
-import * as http from 'http';
-import * as path from 'path';
 import { session, webContents, WebContents } from 'electron/main';
+
 import { expect } from 'chai';
 import { v4 } from 'uuid';
+
+import { on, once } from 'node:events';
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as path from 'node:path';
+
 import { listen } from './lib/spec-helpers';
-import { on, once } from 'events';
 
 const partition = 'service-workers-spec';
 

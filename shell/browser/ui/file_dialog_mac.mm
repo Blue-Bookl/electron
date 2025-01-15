@@ -5,21 +5,25 @@
 #include "shell/browser/ui/file_dialog.h"
 
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #import <Cocoa/Cocoa.h>
 #import <CoreServices/CoreServices.h>
 
+#include "base/apple/foundation_util.h"
+#include "base/apple/scoped_cftyperef.h"
 #include "base/files/file_util.h"
-#include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
-#include "base/mac/scoped_cftyperef.h"
 #include "base/strings/sys_string_conversions.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
+#include "electron/mas.h"
 #include "shell/browser/native_window.h"
 #include "shell/common/gin_converters/file_path_converter.h"
+#include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/promise.h"
 #include "shell/common/thread_restrictions.h"
 
 @interface PopUpButtonHandler : NSObject
@@ -66,15 +70,18 @@
 
 // Manages the PopUpButtonHandler.
 @interface ElectronAccessoryView : NSView
+@property(nonatomic, strong) PopUpButtonHandler* popUpButtonHandler;
 @end
 
 @implementation ElectronAccessoryView
 
+@synthesize popUpButtonHandler;
+
 - (void)dealloc {
   auto* popupButton =
       static_cast<NSPopUpButton*>([[self subviews] objectAtIndex:1]);
-  [[popupButton target] release];
-  [super dealloc];
+  popupButton.target = nil;
+  popUpButtonHandler = nil;
 }
 
 @end
@@ -148,10 +155,11 @@ void SetAllowedFileTypes(NSSavePanel* dialog, const Filters& filters) {
   [popupButton setTarget:popUpButtonHandler];
   [popupButton setAction:@selector(selectFormat:)];
 
-  [accessoryView addSubview:[label autorelease]];
-  [accessoryView addSubview:[popupButton autorelease]];
+  [accessoryView addSubview:label];
+  [accessoryView addSubview:popupButton];
+  [accessoryView setPopUpButtonHandler:popUpButtonHandler];
 
-  [dialog setAccessoryView:[accessoryView autorelease]];
+  [dialog setAccessoryView:accessoryView];
 }
 
 void SetupDialog(NSSavePanel* dialog, const DialogSettings& settings) {
@@ -354,7 +362,7 @@ void OpenDialogCompletion(int chosen,
                           bool security_scoped_bookmarks,
                           gin_helper::Promise<gin_helper::Dictionary> promise) {
   v8::HandleScope scope(promise.isolate());
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(promise.isolate());
+  auto dict = gin_helper::Dictionary::CreateEmpty(promise.isolate());
   if (chosen == NSModalResponseCancel) {
     dict.Set("canceled", true);
     dict.Set("filePaths", std::vector<base::FilePath>());
@@ -432,12 +440,12 @@ void SaveDialogCompletion(int chosen,
                           bool security_scoped_bookmarks,
                           gin_helper::Promise<gin_helper::Dictionary> promise) {
   v8::HandleScope scope(promise.isolate());
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(promise.isolate());
+  auto dict = gin_helper::Dictionary::CreateEmpty(promise.isolate());
   if (chosen == NSModalResponseCancel) {
     dict.Set("canceled", true);
     dict.Set("filePath", base::FilePath());
 #if IS_MAS_BUILD()
-    dict.Set("bookmark", base::StringPiece());
+    dict.Set("bookmark", std::string_view{});
 #endif
   } else {
     std::string path = base::SysNSStringToUTF8([[dialog URL] path]);

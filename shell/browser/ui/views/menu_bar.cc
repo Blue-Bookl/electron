@@ -8,6 +8,7 @@
 
 #include "shell/browser/native_window.h"
 #include "shell/browser/ui/views/submenu_button.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/color/color_provider.h"
 #include "ui/native_theme/common_theme.h"
 #include "ui/views/background.h"
@@ -29,8 +30,6 @@ namespace {
 const SkColor kDefaultColor = SkColorSetARGB(255, 233, 233, 233);
 
 }  // namespace
-
-const char MenuBar::kViewClassName[] = "ElectronMenuBar";
 
 MenuBar::MenuBar(NativeWindow* window, RootView* root_view)
     : background_color_(kDefaultColor), window_(window), root_view_(root_view) {
@@ -56,14 +55,14 @@ void MenuBar::SetMenu(ElectronMenuModel* model) {
 }
 
 void MenuBar::SetAcceleratorVisibility(bool visible) {
-  for (auto* child : GetChildrenInZOrder())
+  for (views::View* child : GetChildrenInZOrder())
     static_cast<SubmenuButton*>(child)->SetAcceleratorVisibility(visible);
 }
 
 MenuBar::View* MenuBar::FindAccelChild(char16_t key) {
   if (key == 0)
     return nullptr;
-  for (auto* child : GetChildrenInZOrder()) {
+  for (views::View* child : GetChildrenInZOrder()) {
     if (static_cast<SubmenuButton*>(child)->accelerator() == key)
       return child;
   }
@@ -169,10 +168,6 @@ void MenuBar::OnDidChangeFocus(View* focused_before, View* focused_now) {
     root_view_->RestoreFocus();
 }
 
-const char* MenuBar::GetClassName() const {
-  return kViewClassName;
-}
-
 void MenuBar::ButtonPressed(size_t id, const ui::Event& event) {
   // Hide the accelerator when a submenu is activated.
   SetAcceleratorVisibility(pane_has_focus());
@@ -190,7 +185,7 @@ void MenuBar::ButtonPressed(size_t id, const ui::Event& event) {
   }
 
   SubmenuButton* source = nullptr;
-  for (auto* child : children()) {
+  for (views::View* child : children()) {
     auto* button = static_cast<SubmenuButton*>(child);
     int button_id = button->GetID();
     if (button_id >= 0 && static_cast<size_t>(button_id) == id) {
@@ -202,9 +197,10 @@ void MenuBar::ButtonPressed(size_t id, const ui::Event& event) {
 
   // Deleted in MenuDelegate::OnMenuClosed
   auto* menu_delegate = new MenuDelegate(this);
-  menu_delegate->RunMenu(
-      menu_model_->GetSubmenuModelAt(id), source,
-      event.IsKeyEvent() ? ui::MENU_SOURCE_KEYBOARD : ui::MENU_SOURCE_MOUSE);
+  menu_delegate->RunMenu(menu_model_->GetSubmenuModelAt(id), source,
+                         event.IsKeyEvent()
+                             ? ui::mojom::MenuSourceType::kKeyboard
+                             : ui::mojom::MenuSourceType::kMouse);
   menu_delegate->AddObserver(this);
 }
 
@@ -254,7 +250,7 @@ void MenuBar::UpdateViewColors() {
 #if BUILDFLAG(IS_LINUX)
   const auto& textColor =
       window_->IsFocused() ? enabled_color_ : disabled_color_;
-  for (auto* child : GetChildrenInZOrder()) {
+  for (views::View* child : GetChildrenInZOrder()) {
     auto* button = static_cast<SubmenuButton*>(child);
     button->SetTextColor(views::Button::STATE_NORMAL, textColor);
     button->SetTextColor(views::Button::STATE_DISABLED, disabled_color_);
@@ -263,11 +259,14 @@ void MenuBar::UpdateViewColors() {
     button->SetUnderlineColor(textColor);
   }
 #elif BUILDFLAG(IS_WIN)
-  for (auto* child : GetChildrenInZOrder()) {
+  for (views::View* child : GetChildrenInZOrder()) {
     auto* button = static_cast<SubmenuButton*>(child);
     button->SetUnderlineColor(color_utils::GetSysSkColor(COLOR_MENUTEXT));
   }
 #endif
 }
+
+BEGIN_METADATA(MenuBar)
+END_METADATA
 
 }  // namespace electron

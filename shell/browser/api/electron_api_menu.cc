@@ -6,11 +6,13 @@
 
 #include <utility>
 
+#include "shell/browser/api/electron_api_base_window.h"
 #include "shell/browser/api/ui_event.h"
 #include "shell/browser/javascript_environment.h"
 #include "shell/browser/native_window.h"
 #include "shell/common/gin_converters/accelerator_converter.h"
 #include "shell/common/gin_converters/callback_converter.h"
+#include "shell/common/gin_converters/content_converter.h"
 #include "shell/common/gin_converters/file_path_converter.h"
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_converters/image_converter.h"
@@ -68,6 +70,8 @@ Menu::~Menu() {
   }
 }
 
+namespace {
+
 bool InvokeBoolMethod(const Menu* menu,
                       const char* method,
                       int command_id,
@@ -81,6 +85,8 @@ bool InvokeBoolMethod(const Menu* menu,
   bool ret = false;
   return gin::ConvertFromV8(isolate, val, &ret) ? ret : default_value;
 }
+
+}  // namespace
 
 bool Menu::IsCommandIdChecked(int command_id) const {
   return InvokeBoolMethod(this, "_isCommandIdChecked", command_id);
@@ -296,6 +302,10 @@ void Menu::FillObjectTemplate(v8::Isolate* isolate,
       .SetMethod("_getUserAcceleratorAt", &Menu::GetUserAcceleratorAt)
 #endif
       .Build();
+}
+
+const char* Menu::GetTypeName() {
+  return GetClassName();
 }
 
 }  // namespace electron::api

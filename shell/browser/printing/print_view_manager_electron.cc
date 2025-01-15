@@ -8,7 +8,6 @@
 
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
-#include "build/build_config.h"
 #include "components/printing/browser/print_to_pdf/pdf_print_utils.h"
 #include "printing/mojom/print.mojom.h"
 #include "printing/page_range.h"
@@ -64,7 +63,7 @@ void PrintViewManagerElectron::DidPrintToPdf(
     PrintToPdfCallback callback,
     print_to_pdf::PdfPrintResult result,
     scoped_refptr<base::RefCountedMemory> memory) {
-  base::Erase(pdf_jobs_, cookie);
+  std::erase(pdf_jobs_, cookie);
   std::move(callback).Run(result, memory);
 }
 
@@ -107,7 +106,7 @@ void PrintViewManagerElectron::ScriptedPrint(
   auto default_param = printing::mojom::PrintPagesParams::New();
   default_param->params = printing::mojom::PrintParams::New();
   LOG(ERROR) << "Scripted print is not supported";
-  std::move(callback).Run(std::move(default_param), /*cancelled*/ false);
+  std::move(callback).Run(std::move(default_param));
 }
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)

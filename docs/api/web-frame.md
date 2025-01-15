@@ -10,7 +10,7 @@ certain properties and methods (e.g. `webFrame.firstChild`).
 
 An example of zooming current page to 200%.
 
-```javascript
+```js
 const { webFrame } = require('electron')
 
 webFrame.setZoomFactor(2)
@@ -96,7 +96,7 @@ with an array of misspelt words when complete.
 
 An example of using [node-spellchecker][spellchecker] as provider:
 
-```javascript @ts-expect-error=[2,6]
+```js @ts-expect-error=[2,6]
 const { webFrame } = require('electron')
 const spellChecker = require('spellchecker')
 webFrame.setSpellCheckProvider('en-US', {
@@ -113,7 +113,7 @@ webFrame.setSpellCheckProvider('en-US', {
 
 * `css` string
 * `options` Object (optional)
-  * `cssOrigin` string (optional) - Can be either 'user' or 'author'. Sets the [cascade origin](https://www.w3.org/TR/css3-cascade/#cascade-origin) of the inserted stylesheet. Default is 'author'.
+  * `cssOrigin` string (optional) - Can be 'user' or 'author'. Sets the [cascade origin](https://www.w3.org/TR/css3-cascade/#cascade-origin) of the inserted stylesheet. Default is 'author'.
 
 Returns `string` - A key for the inserted CSS that can later be used to remove
 the CSS via `webFrame.removeInsertedCSS(key)`.
@@ -182,7 +182,7 @@ dispatch errors of isolated worlds to foreign worlds.
 
 ### `webFrame.setIsolatedWorldInfo(worldId, info)`
 
-* `worldId` Integer - The ID of the world to run the javascript in, `0` is the default world, `999` is the world used by Electrons `contextIsolation` feature. Chrome extensions reserve the range of IDs in `[1 << 20, 1 << 29)`. You can provide any integer here.
+* `worldId` Integer - The ID of the world to run the javascript in, `0` is the default world, `999` is the world used by Electron's `contextIsolation` feature. Chrome extensions reserve the range of IDs in `[1 << 20, 1 << 29)`. You can provide any integer here.
 * `info` Object
   * `securityOrigin` string (optional) - Security origin for the isolated world.
   * `csp` string (optional) - Content Security Policy for the isolated world.
@@ -205,14 +205,14 @@ Returns `Object`:
 Returns an object describing usage information of Blink's internal memory
 caches.
 
-```javascript
+```js
 const { webFrame } = require('electron')
 console.log(webFrame.getResourceUsage())
 ```
 
 This will generate:
 
-```javascript
+```js
 {
   images: {
     count: 22,

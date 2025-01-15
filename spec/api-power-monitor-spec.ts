@@ -8,9 +8,12 @@
 // python-dbusmock.
 import { expect } from 'chai';
 import * as dbus from 'dbus-native';
+
+import { once } from 'node:events';
+import { setTimeout } from 'node:timers/promises';
+import { promisify } from 'node:util';
+
 import { ifdescribe, startRemoteControlApp } from './lib/spec-helpers';
-import { promisify } from 'util';
-import { setTimeout } from 'timers/promises';
 
 describe('powerMonitor', () => {
   let logindMock: any, dbusMockPowerMonitor: any, getCalls: any, emitSignal: any, reset: any;
@@ -77,17 +80,19 @@ describe('powerMonitor', () => {
     });
 
     describe('when PrepareForSleep(true) signal is sent by logind', () => {
-      it('should emit "suspend" event', (done) => {
-        dbusMockPowerMonitor.once('suspend', () => done());
+      it('should emit "suspend" event', async () => {
+        const suspend = once(dbusMockPowerMonitor, 'suspend');
         emitSignal('org.freedesktop.login1.Manager', 'PrepareForSleep',
           'b', [['b', true]]);
+        await suspend;
       });
 
       describe('when PrepareForSleep(false) signal is sent by logind', () => {
-        it('should emit "resume" event', done => {
-          dbusMockPowerMonitor.once('resume', () => done());
+        it('should emit "resume" event', async () => {
+          const resume = once(dbusMockPowerMonitor, 'resume');
           emitSignal('org.freedesktop.login1.Manager', 'PrepareForSleep',
             'b', [['b', false]]);
+          await resume;
         });
 
         it('should have called Inhibit again', async () => {

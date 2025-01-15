@@ -10,11 +10,16 @@
 #include <memory>
 #include <utility>
 
+#include <windows.h>
+#include <winuser.h>
+
+#include "shell/browser/native_window_views.h"
 #include "shell/browser/ui/views/win_caption_button.h"
 #include "shell/browser/ui/views/win_frame_view.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/layer.h"
 #include "ui/strings/grit/ui_strings.h"
+#include "ui/views/accessibility/view_accessibility.h"
 #include "ui/views/background.h"
 #include "ui/views/layout/flex_layout.h"
 #include "ui/views/view_class_properties.h"
@@ -79,6 +84,7 @@ WinCaptionButtonContainer::WinCaptionButtonContainer(WinFrameView* frame_view)
                                    views::MaximumFlexSizeRule::kPreferred,
                                    /* adjust_width_for_height */ false,
                                    views::MinimumFlexSizeRule::kScaleToZero));
+  UpdateButtonToolTipsForWindowControlsOverlay();
 }
 
 WinCaptionButtonContainer::~WinCaptionButtonContainer() {}
@@ -101,18 +107,6 @@ int WinCaptionButtonContainer::NonClientHitTest(const gfx::Point& point) const {
   return HTCAPTION;
 }
 
-gfx::Size WinCaptionButtonContainer::GetButtonSize() const {
-  // Close button size is set the same as all the buttons
-  return close_button_->GetSize();
-}
-
-void WinCaptionButtonContainer::SetButtonSize(gfx::Size size) {
-  minimize_button_->SetSize(size);
-  maximize_button_->SetSize(size);
-  restore_button_->SetSize(size);
-  close_button_->SetSize(size);
-}
-
 void WinCaptionButtonContainer::ResetWindowControls() {
   minimize_button_->SetState(views::Button::STATE_NORMAL);
   maximize_button_->SetState(views::Button::STATE_NORMAL);
@@ -128,10 +122,7 @@ void WinCaptionButtonContainer::AddedToWidget() {
   widget_observation_.Observe(widget);
 
   UpdateButtons();
-
-  if (frame_view_->window()->IsWindowControlsOverlayEnabled()) {
-    UpdateBackground();
-  }
+  UpdateBackground();
 }
 
 void WinCaptionButtonContainer::RemovedFromWidget() {
@@ -156,35 +147,48 @@ void WinCaptionButtonContainer::UpdateBackground() {
 }
 
 void WinCaptionButtonContainer::UpdateButtons() {
-  const bool is_maximized = frame_view_->frame()->IsMaximized();
-  restore_button_->SetVisible(is_maximized);
-  maximize_button_->SetVisible(!is_maximized);
-
   const bool minimizable = frame_view_->window()->IsMinimizable();
   minimize_button_->SetEnabled(minimizable);
+  minimize_button_->SetVisible(minimizable);
 
-  // In touch mode, windows cannot be taken out of fullscreen or tiled mode, so
-  // the maximize/restore button should be disabled.
-  const bool is_touch = ui::TouchUiController::Get()->touch_ui();
-  restore_button_->SetEnabled(!is_touch);
+  const bool is_maximized = frame_view_->frame()->IsMaximized();
+  const bool maximizable = frame_view_->window()->IsMaximizable();
+  restore_button_->SetVisible(is_maximized && maximizable);
+  maximize_button_->SetVisible(!is_maximized && maximizable);
 
   // In touch mode, windows cannot be taken out of fullscreen or tiled mode, so
   // the maximize/restore button should be disabled, unless the window is not
   // maximized.
-  const bool maximizable = frame_view_->window()->IsMaximizable();
-  maximize_button_->SetEnabled(!(is_touch && is_maximized) && maximizable);
+  const bool is_touch = ui::TouchUiController::Get()->touch_ui();
+  restore_button_->SetEnabled(!is_touch);
+  maximize_button_->SetEnabled(!is_touch || !is_maximized);
 
+  // If the window isn't closable, the close button should be disabled.
   const bool closable = frame_view_->window()->IsClosable();
   close_button_->SetEnabled(closable);
 
-  // If all three of closable, maximizable, and minimizable are disabled,
-  // Windows natively only shows the disabled closable button. Copy that
-  // behavior here.
-  if (!maximizable && !closable && !minimizable) {
-    minimize_button_->SetVisible(false);
-    maximize_button_->SetVisible(false);
-  }
-
   InvalidateLayout();
 }
+
+void WinCaptionButtonContainer::UpdateButtonToolTipsForWindowControlsOverlay() {
+  minimize_button_->SetTooltipText(
+      minimize_button_->GetViewAccessibility().GetCachedName());
+  maximize_button_->SetTooltipText(
+      maximize_button_->GetViewAccessibility().GetCachedName());
+  restore_button_->SetTooltipText(
+      restore_button_->GetViewAccessibility().GetCachedName());
+  close_button_->SetTooltipText(
+      close_button_->GetViewAccessibility().GetCachedName());
+}
+
+void WinCaptionButtonContainer::SetButtonSize(gfx::Size size) {
+  minimize_button_->SetSize(size);
+  maximize_button_->SetSize(size);
+  restore_button_->SetSize(size);
+  close_button_->SetSize(size);
+}
+
+BEGIN_METADATA(WinCaptionButtonContainer)
+END_METADATA
+
 }  // namespace electron

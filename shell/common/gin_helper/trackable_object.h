@@ -7,7 +7,6 @@
 
 #include <vector>
 
-#include "base/functional/bind.h"
 #include "base/memory/weak_ptr.h"
 #include "shell/common/gin_helper/cleaned_up_at_exit.h"
 #include "shell/common/gin_helper/event_emitter.h"
@@ -102,12 +101,12 @@ class TrackableObject : public TrackableObjectBase, public EventEmitter<T> {
     if (weak_map_)
       return weak_map_->Values(isolate);
     else
-      return std::vector<v8::Local<v8::Object>>();
+      return {};
   }
 
   // Removes this instance from the weak map.
   void RemoveFromWeakMap() {
-    if (weak_map_ && weak_map_->Has(weak_map_id()))
+    if (weak_map_)
       weak_map_->Remove(weak_map_id());
   }
 

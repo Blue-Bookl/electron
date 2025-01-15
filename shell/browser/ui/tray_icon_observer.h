@@ -23,6 +23,7 @@ class TrayIconObserver : public base::CheckedObserver {
                          const gfx::Point& location,
                          int modifiers) {}
   virtual void OnDoubleClicked(const gfx::Rect& bounds, int modifiers) {}
+  virtual void OnMiddleClicked(const gfx::Rect& bounds, int modifiers) {}
   virtual void OnBalloonShow() {}
   virtual void OnBalloonClicked() {}
   virtual void OnBalloonClosed() {}
@@ -40,7 +41,7 @@ class TrayIconObserver : public base::CheckedObserver {
   virtual void OnMouseMoved(const gfx::Point& location, int modifiers) {}
 
  protected:
-  ~TrayIconObserver() override {}
+  ~TrayIconObserver() override = default;
 };
 
 }  // namespace electron

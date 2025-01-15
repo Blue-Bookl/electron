@@ -10,10 +10,15 @@
 
 #include "base/memory/raw_ptr.h"
 #include "content/public/browser/content_browser_client.h"
-#include "gin/handle.h"
 #include "gin/wrappable.h"
 #include "shell/browser/net/electron_url_loader_factory.h"
 #include "shell/common/gin_helper/constructible.h"
+
+namespace gin {
+class Arguments;
+template <typename T>
+class Handle;
+}  // namespace gin
 
 namespace electron {
 
@@ -22,7 +27,8 @@ class ProtocolRegistry;
 
 namespace api {
 
-std::vector<std::string> GetStandardSchemes();
+const std::vector<std::string>& GetStandardSchemes();
+const std::vector<std::string>& GetCodeCacheSchemes();
 
 void AddServiceWorkerScheme(const std::string& scheme);
 
@@ -39,19 +45,21 @@ enum class ProtocolError {
 };
 
 // Protocol implementation based on network services.
-class Protocol : public gin::Wrappable<Protocol>,
-                 public gin_helper::Constructible<Protocol> {
+class Protocol final : public gin::Wrappable<Protocol>,
+                       public gin_helper::Constructible<Protocol> {
  public:
   static gin::Handle<Protocol> Create(v8::Isolate* isolate,
                                       ElectronBrowserContext* browser_context);
 
+  // gin_helper::Constructible
   static gin::Handle<Protocol> New(gin_helper::ErrorThrower thrower);
-
-  // gin::Wrappable
-  static gin::WrapperInfo kWrapperInfo;
   static v8::Local<v8::ObjectTemplate> FillObjectTemplate(
       v8::Isolate* isolate,
       v8::Local<v8::ObjectTemplate> tmpl);
+  static const char* GetClassName() { return "Protocol"; }
+
+  // gin::Wrappable
+  static gin::WrapperInfo kWrapperInfo;
   const char* GetTypeName() override;
 
  private:

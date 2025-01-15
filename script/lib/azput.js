@@ -1,11 +1,19 @@
 /* eslint-disable camelcase */
+
 const { BlobServiceClient } = require('@azure/storage-blob');
-const fs = require('fs');
-const path = require('path');
+const minimist = require('minimist');
 
-const blobServiceClient = BlobServiceClient.fromConnectionString(process.env.ELECTRON_ARTIFACTS_BLOB_STORAGE);
+const path = require('node:path');
 
-const args = require('minimist')(process.argv.slice(2));
+const { ELECTRON_ARTIFACTS_BLOB_STORAGE } = process.env;
+if (!ELECTRON_ARTIFACTS_BLOB_STORAGE) {
+  console.error('Missing required ELECTRON_ARTIFACTS_BLOB_STORAGE environment variable.');
+  process.exit(1);
+}
+
+const blobServiceClient = BlobServiceClient.fromConnectionString(ELECTRON_ARTIFACTS_BLOB_STORAGE);
+
+const args = minimist(process.argv.slice(2));
 
 let { prefix = '/', key_prefix = '', _: files } = args;
 if (prefix && !prefix.endsWith(path.sep)) prefix = path.resolve(prefix) + path.sep;

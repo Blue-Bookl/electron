@@ -7,13 +7,17 @@
 #include <fcntl.h>
 
 #include <stdio.h>
+#include <optional>
 #include <string>
 #include <vector>
+
+#include <gdk/gdk.h>
 
 #include "base/cancelable_callback.h"
 #include "base/containers/contains.h"
 #include "base/environment.h"
 #include "base/files/file_util.h"
+#include "base/files/scoped_file.h"
 #include "base/logging.h"
 #include "base/memory/raw_ptr.h"
 #include "base/nix/xdg_util.h"
@@ -21,6 +25,8 @@
 #include "base/posix/eintr_wrapper.h"
 #include "base/process/kill.h"
 #include "base/process/launch.h"
+#include "base/run_loop.h"
+#include "base/strings/escape.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "components/dbus/thread_linux/dbus_thread_linux.h"
@@ -28,9 +34,8 @@
 #include "dbus/bus.h"
 #include "dbus/message.h"
 #include "dbus/object_proxy.h"
+
 #include "shell/common/platform_util_internal.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
-#include "ui/gtk/gtk_util.h"  // nogncheck
 #include "url/gurl.h"
 
 #define ELECTRON_TRASH "ELECTRON_TRASH"
@@ -216,8 +221,9 @@ class ShowItemHelper {
     dbus::MessageWriter writer(&show_items_call);
 
     writer.AppendArrayOfStrings(
-        {"file://" + full_path.value()});  // List of file(s) to highlight.
-    writer.AppendString({});               // startup-id
+        {"file://" + base::EscapePath(
+                         full_path.value())});  // List of file(s) to highlight.
+    writer.AppendString({});                    // startup-id
 
     ShowItemUsingBusCall(&show_items_call, full_path);
   }
@@ -245,7 +251,7 @@ class ShowItemHelper {
   raw_ptr<dbus::ObjectProxy> dbus_proxy_ = nullptr;
   raw_ptr<dbus::ObjectProxy> object_proxy_ = nullptr;
 
-  absl::optional<bool> prefer_filemanager_interface_;
+  std::optional<bool> prefer_filemanager_interface_;
 };
 
 // Descriptions pulled from https://linux.die.net/man/1/xdg-open
@@ -267,8 +273,21 @@ std::string GetErrorDescription(int error_code) {
 bool XDGUtil(const std::vector<std::string>& argv,
              const base::FilePath& working_directory,
              const bool wait_for_exit,
+             const bool focus_launched_process,
              platform_util::OpenCallback callback) {
   base::LaunchOptions options;
+  if (focus_launched_process) {
+    base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
+    base::RepeatingClosure quit_loop = run_loop.QuitClosure();
+    base::nix::CreateLaunchOptionsWithXdgActivation(base::BindOnce(
+        [](base::RepeatingClosure quit_loop, base::LaunchOptions* options_out,
+           base::LaunchOptions options) {
+          *options_out = std::move(options);
+          std::move(quit_loop).Run();
+        },
+        std::move(quit_loop), &options));
+    run_loop.Run();
+  }
   options.current_directory = working_directory;
   options.allow_new_privs = true;
   // xdg-open can fall back on mailcap which eventually might plumb through
@@ -300,11 +319,12 @@ bool XDGOpen(const base::FilePath& working_directory,
              const bool wait_for_exit,
              platform_util::OpenCallback callback) {
   return XDGUtil({"xdg-open", path}, working_directory, wait_for_exit,
-                 std::move(callback));
+                 /*focus_launched_process=*/true, std::move(callback));
 }
 
 bool XDGEmail(const std::string& email, const bool wait_for_exit) {
   return XDGUtil({"xdg-email", email}, base::FilePath(), wait_for_exit,
+                 /*focus_launched_process=*/true,
                  platform_util::OpenCallback());
 }
 
@@ -373,7 +393,8 @@ bool MoveItemToTrash(const base::FilePath& full_path, bool delete_on_fail) {
     argv = {"gio", "trash", filename};
   }
 
-  return XDGUtil(argv, base::FilePath(), true, platform_util::OpenCallback());
+  return XDGUtil(argv, base::FilePath(), true, /*focus_launched_process=*/false,
+                 platform_util::OpenCallback());
 }
 
 namespace internal {
@@ -390,15 +411,8 @@ bool PlatformTrashItem(const base::FilePath& full_path, std::string* error) {
 }  // namespace internal
 
 void Beep() {
-  // echo '\a' > /dev/console
-  FILE* fp = fopen("/dev/console", "a");
-  if (fp == nullptr) {
-    fp = fopen("/dev/tty", "a");
-  }
-  if (fp != nullptr) {
-    fprintf(fp, "\a");
-    fclose(fp);
-  }
+  auto* display = gdk_display_get_default();
+  gdk_display_beep(display);
 }
 
 bool GetDesktopName(std::string* setme) {

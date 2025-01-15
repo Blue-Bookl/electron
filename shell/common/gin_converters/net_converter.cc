@@ -4,18 +4,18 @@
 
 #include "shell/common/gin_converters/net_converter.h"
 
-#include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/containers/span.h"
 #include "base/memory/raw_ptr.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "gin/converter.h"
 #include "gin/dictionary.h"
+#include "gin/handle.h"
 #include "gin/object_template_builder.h"
 #include "net/cert/x509_certificate.h"
 #include "net/cert/x509_util.h"
@@ -26,12 +26,15 @@
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/resource_request_body.h"
 #include "services/network/public/mojom/chunked_data_pipe_getter.mojom.h"
+#include "services/network/public/mojom/fetch_api.mojom.h"
+#include "services/network/public/mojom/url_request.mojom.h"
 #include "shell/browser/api/electron_api_data_pipe_holder.h"
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_converters/std_converter.h"
 #include "shell/common/gin_converters/value_converter.h"
 #include "shell/common/gin_helper/promise.h"
 #include "shell/common/node_includes.h"
+#include "shell/common/v8_util.h"
 
 namespace gin {
 
@@ -40,7 +43,7 @@ namespace {
 bool CertFromData(const std::string& data,
                   scoped_refptr<net::X509Certificate>* out) {
   auto cert_list = net::X509Certificate::CreateCertificateListFromBytes(
-      base::as_bytes(base::make_span(data)),
+      base::as_byte_span(data),
       net::X509Certificate::FORMAT_SINGLE_CERTIFICATE);
   if (cert_list.empty())
     return false;
@@ -60,7 +63,7 @@ bool CertFromData(const std::string& data,
 v8::Local<v8::Value> Converter<net::AuthChallengeInfo>::ToV8(
     v8::Isolate* isolate,
     const net::AuthChallengeInfo& val) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("isProxy", val.is_proxy);
   dict.Set("scheme", val.scheme);
   dict.Set("host", val.challenger.host());
@@ -84,8 +87,8 @@ v8::Local<v8::Value> Converter<scoped_refptr<net::X509Certificate>>::ToV8(
   dict.Set("subjectName", val->subject().GetDisplayName());
   dict.Set("serialNumber", base::HexEncode(val->serial_number().data(),
                                            val->serial_number().size()));
-  dict.Set("validStart", val->valid_start().ToDoubleT());
-  dict.Set("validExpiry", val->valid_expiry().ToDoubleT());
+  dict.Set("validStart", val->valid_start().InSecondsFSinceUnixEpoch());
+  dict.Set("validExpiry", val->valid_expiry().InSecondsFSinceUnixEpoch());
   dict.Set("fingerprint",
            net::HashValue(val->CalculateFingerprint256(val->cert_buffer()))
                .ToString());
@@ -244,15 +247,15 @@ bool Converter<net::HttpRequestHeaders>::FromV8(v8::Isolate* isolate,
   if (!ConvertFromV8(isolate, val, &dict))
     return false;
   for (const auto it : dict) {
-    if (it.second.is_string()) {
-      std::string value = it.second.GetString();
-      out->SetHeader(it.first, value);
-    }
+    if (it.second.is_string())
+      out->SetHeader(it.first, std::move(it.second).TakeString());
   }
   return true;
 }
 
-class ChunkedDataPipeReadableStream
+namespace {
+
+class ChunkedDataPipeReadableStream final
     : public gin::Wrappable<ChunkedDataPipeReadableStream> {
  public:
   static gin::Handle<ChunkedDataPipeReadableStream> Create(
@@ -270,6 +273,8 @@ class ChunkedDataPipeReadableStream
                ChunkedDataPipeReadableStream>::GetObjectTemplateBuilder(isolate)
         .SetMethod("read", &ChunkedDataPipeReadableStream::Read);
   }
+
+  const char* GetTypeName() override { return "ChunkedDataPipeReadableStream"; }
 
   static gin::WrapperInfo kWrapperInfo;
 
@@ -359,13 +364,12 @@ class ChunkedDataPipeReadableStream
                               base::Unretained(this)));
     }
 
-    uint32_t num_bytes = buf->ByteLength();
+    size_t num_bytes = buf->ByteLength();
     if (size_ && num_bytes > *size_ - bytes_read_)
       num_bytes = *size_ - bytes_read_;
     MojoResult rv = data_pipe_->ReadData(
-        static_cast<void*>(static_cast<char*>(buf->Buffer()->Data()) +
-                           buf->ByteOffset()),
-        &num_bytes, MOJO_READ_DATA_FLAG_NONE);
+        MOJO_READ_DATA_FLAG_NONE,
+        electron::util::as_byte_span(buf).first(num_bytes), num_bytes);
     if (rv == MOJO_RESULT_OK) {
       bytes_read_ += num_bytes;
       // Not needed for correctness, but this allows the consumer to send the
@@ -483,14 +487,17 @@ class ChunkedDataPipeReadableStream
   mojo::Remote<network::mojom::ChunkedDataPipeGetter> chunked_data_pipe_getter_;
   mojo::ScopedDataPipeConsumerHandle data_pipe_;
   mojo::SimpleWatcher handle_watcher_;
-  absl::optional<uint64_t> size_;
+  std::optional<uint64_t> size_;
   uint64_t bytes_read_ = 0;
   bool is_eof_ = false;
   v8::Global<v8::ArrayBufferView> buf_;
   gin_helper::Promise<int> promise_;
 };
+
 gin::WrapperInfo ChunkedDataPipeReadableStream::kWrapperInfo = {
     gin::kEmbedderNativeGin};
+
+}  // namespace
 
 // static
 v8::Local<v8::Value> Converter<network::ResourceRequestBody>::ToV8(
@@ -511,7 +518,8 @@ v8::Local<v8::Value> Converter<network::ResourceRequestBody>::ToV8(
         upload_data.Set("offset", static_cast<int>(element_file.offset()));
         upload_data.Set("length", static_cast<int>(element_file.length()));
         upload_data.Set("modificationTime",
-                        element_file.expected_modification_time().ToDoubleT());
+                        element_file.expected_modification_time()
+                            .InSecondsFSinceUnixEpoch());
         break;
       }
       case network::mojom::DataElement::Tag::kBytes: {
@@ -587,9 +595,7 @@ bool Converter<scoped_refptr<network::ResourceRequestBody>>::FromV8(
     if (!type)
       return false;
     if (*type == "rawData") {
-      const base::Value::BlobStorage* bytes = dict.FindBlob("bytes");
-      (*out)->AppendBytes(reinterpret_cast<const char*>(bytes->data()),
-                          base::checked_cast<int>(bytes->size()));
+      (*out)->AppendBytes(std::move(*dict.Find("bytes")).TakeBlob());
     } else if (*type == "file") {
       const std::string* file = dict.FindString("filePath");
       if (!file)
@@ -598,10 +604,10 @@ bool Converter<scoped_refptr<network::ResourceRequestBody>>::FromV8(
           dict.FindDouble("modificationTime").value_or(0.0);
       int offset = dict.FindInt("offset").value_or(0);
       int length = dict.FindInt("length").value_or(-1);
-      (*out)->AppendFileRange(base::FilePath::FromUTF8Unsafe(*file),
-                              static_cast<uint64_t>(offset),
-                              static_cast<uint64_t>(length),
-                              base::Time::FromDoubleT(modification_time));
+      (*out)->AppendFileRange(
+          base::FilePath::FromUTF8Unsafe(*file), static_cast<uint64_t>(offset),
+          static_cast<uint64_t>(length),
+          base::Time::FromSecondsSinceUnixEpoch(modification_time));
     }
   }
   return true;
@@ -611,7 +617,7 @@ bool Converter<scoped_refptr<network::ResourceRequestBody>>::FromV8(
 v8::Local<v8::Value> Converter<network::ResourceRequest>::ToV8(
     v8::Isolate* isolate,
     const network::ResourceRequest& val) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("method", val.method);
   dict.Set("url", val.url.spec());
   dict.Set("referrer", val.referrer.spec());
@@ -625,7 +631,7 @@ v8::Local<v8::Value> Converter<network::ResourceRequest>::ToV8(
 v8::Local<v8::Value> Converter<electron::VerifyRequestParams>::ToV8(
     v8::Isolate* isolate,
     electron::VerifyRequestParams val) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("hostname", val.hostname);
   dict.Set("certificate", val.certificate);
   dict.Set("validatedCertificate", val.validated_certificate);
@@ -639,7 +645,7 @@ v8::Local<v8::Value> Converter<electron::VerifyRequestParams>::ToV8(
 v8::Local<v8::Value> Converter<net::HttpVersion>::ToV8(
     v8::Isolate* isolate,
     const net::HttpVersion& val) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin::Dictionary::CreateEmpty(isolate);
   dict.Set("major", static_cast<uint32_t>(val.major_value()));
   dict.Set("minor", static_cast<uint32_t>(val.minor_value()));
   return ConvertToV8(isolate, dict);
@@ -649,7 +655,7 @@ v8::Local<v8::Value> Converter<net::HttpVersion>::ToV8(
 v8::Local<v8::Value> Converter<net::RedirectInfo>::ToV8(
     v8::Isolate* isolate,
     const net::RedirectInfo& val) {
-  gin::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin::Dictionary::CreateEmpty(isolate);
 
   dict.Set("statusCode", val.status_code);
   dict.Set("newMethod", val.new_method);
@@ -690,57 +696,27 @@ v8::Local<v8::Value> Converter<net::IPEndPoint>::ToV8(
 bool Converter<net::DnsQueryType>::FromV8(v8::Isolate* isolate,
                                           v8::Local<v8::Value> val,
                                           net::DnsQueryType* out) {
-  std::string query_type;
-  if (!ConvertFromV8(isolate, val, &query_type))
-    return false;
-
-  if (query_type == "A") {
-    *out = net::DnsQueryType::A;
-    return true;
-  }
-
-  if (query_type == "AAAA") {
-    *out = net::DnsQueryType::AAAA;
-    return true;
-  }
-
-  return false;
+  static constexpr auto Lookup =
+      base::MakeFixedFlatMap<std::string_view, net::DnsQueryType>({
+          {"A", net::DnsQueryType::A},
+          {"AAAA", net::DnsQueryType::AAAA},
+      });
+  return FromV8WithLookup(isolate, val, Lookup, out);
 }
 
 // static
 bool Converter<net::HostResolverSource>::FromV8(v8::Isolate* isolate,
                                                 v8::Local<v8::Value> val,
                                                 net::HostResolverSource* out) {
-  std::string query_type;
-  if (!ConvertFromV8(isolate, val, &query_type))
-    return false;
-
-  if (query_type == "any") {
-    *out = net::HostResolverSource::ANY;
-    return true;
-  }
-
-  if (query_type == "system") {
-    *out = net::HostResolverSource::SYSTEM;
-    return true;
-  }
-
-  if (query_type == "dns") {
-    *out = net::HostResolverSource::DNS;
-    return true;
-  }
-
-  if (query_type == "mdns") {
-    *out = net::HostResolverSource::MULTICAST_DNS;
-    return true;
-  }
-
-  if (query_type == "localOnly") {
-    *out = net::HostResolverSource::LOCAL_ONLY;
-    return true;
-  }
-
-  return false;
+  using Val = net::HostResolverSource;
+  static constexpr auto Lookup = base::MakeFixedFlatMap<std::string_view, Val>({
+      {"any", Val::ANY},
+      {"dns", Val::DNS},
+      {"localOnly", Val::LOCAL_ONLY},
+      {"mdns", Val::MULTICAST_DNS},
+      {"system", Val::SYSTEM},
+  });
+  return FromV8WithLookup(isolate, val, Lookup, out);
 }
 
 // static
@@ -748,26 +724,13 @@ bool Converter<network::mojom::ResolveHostParameters::CacheUsage>::FromV8(
     v8::Isolate* isolate,
     v8::Local<v8::Value> val,
     network::mojom::ResolveHostParameters::CacheUsage* out) {
-  std::string query_type;
-  if (!ConvertFromV8(isolate, val, &query_type))
-    return false;
-
-  if (query_type == "allowed") {
-    *out = network::mojom::ResolveHostParameters::CacheUsage::ALLOWED;
-    return true;
-  }
-
-  if (query_type == "staleAllowed") {
-    *out = network::mojom::ResolveHostParameters::CacheUsage::STALE_ALLOWED;
-    return true;
-  }
-
-  if (query_type == "disallowed") {
-    *out = network::mojom::ResolveHostParameters::CacheUsage::DISALLOWED;
-    return true;
-  }
-
-  return false;
+  using Val = network::mojom::ResolveHostParameters::CacheUsage;
+  static constexpr auto Lookup = base::MakeFixedFlatMap<std::string_view, Val>({
+      {"allowed", Val::ALLOWED},
+      {"disallowed", Val::DISALLOWED},
+      {"staleAllowed", Val::STALE_ALLOWED},
+  });
+  return FromV8WithLookup(isolate, val, Lookup, out);
 }
 
 // static
@@ -775,21 +738,12 @@ bool Converter<network::mojom::SecureDnsPolicy>::FromV8(
     v8::Isolate* isolate,
     v8::Local<v8::Value> val,
     network::mojom::SecureDnsPolicy* out) {
-  std::string query_type;
-  if (!ConvertFromV8(isolate, val, &query_type))
-    return false;
-
-  if (query_type == "allow") {
-    *out = network::mojom::SecureDnsPolicy::ALLOW;
-    return true;
-  }
-
-  if (query_type == "disable") {
-    *out = network::mojom::SecureDnsPolicy::DISABLE;
-    return true;
-  }
-
-  return false;
+  using Val = network::mojom::SecureDnsPolicy;
+  static constexpr auto Lookup = base::MakeFixedFlatMap<std::string_view, Val>({
+      {"allow", Val::ALLOW},
+      {"disable", Val::DISABLE},
+  });
+  return FromV8WithLookup(isolate, val, Lookup, out);
 }
 
 // static

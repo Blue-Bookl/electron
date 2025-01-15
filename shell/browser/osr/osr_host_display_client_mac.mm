@@ -3,6 +3,8 @@
 // found in the LICENSE file.
 
 #include "shell/browser/osr/osr_host_display_client.h"
+#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkImageInfo.h"
 
 #include <IOSurface/IOSurface.h>
 
@@ -11,15 +13,17 @@ namespace electron {
 void OffScreenHostDisplayClient::OnDisplayReceivedCALayerParams(
     const gfx::CALayerParams& ca_layer_params) {
   if (!ca_layer_params.is_empty) {
-    base::ScopedCFTypeRef<IOSurfaceRef> io_surface(
-        IOSurfaceLookupFromMachPort(ca_layer_params.io_surface_mach_port));
+    base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface(
+        IOSurfaceLookupFromMachPort(
+            ca_layer_params.io_surface_mach_port.get()));
 
     gfx::Size pixel_size_ = ca_layer_params.pixel_size;
-    void* pixels = static_cast<void*>(IOSurfaceGetBaseAddress(io_surface));
-    size_t stride = IOSurfaceGetBytesPerRow(io_surface);
+    void* pixels =
+        static_cast<void*>(IOSurfaceGetBaseAddress(io_surface.get()));
+    size_t stride = IOSurfaceGetBytesPerRow(io_surface.get());
 
     struct IOSurfacePinner {
-      base::ScopedCFTypeRef<IOSurfaceRef> io_surface;
+      base::apple::ScopedCFTypeRef<IOSurfaceRef> io_surface;
     };
 
     SkBitmap bitmap;
@@ -28,7 +32,7 @@ void OffScreenHostDisplayClient::OnDisplayReceivedCALayerParams(
                              kPremul_SkAlphaType),
         pixels, stride);
     bitmap.setImmutable();
-    callback_.Run(ca_layer_params.damage, bitmap);
+    callback_.Run(ca_layer_params.damage, bitmap, {});
   }
 }
 

@@ -1,6 +1,10 @@
-const fs = require('fs');
-const path = require('path');
-const v8 = require('v8');
+const { app, protocol } = require('electron');
+
+const fs = require('node:fs');
+const path = require('node:path');
+const v8 = require('node:v8');
+
+const FAILURE_STATUS_KEY = 'Electron_Spec_Runner_Failures';
 
 // We want to terminate on errors, not throw up a dialog
 process.on('uncaughtException', (err) => {
@@ -12,7 +16,10 @@ process.on('uncaughtException', (err) => {
 process.env.TS_NODE_PROJECT = path.resolve(__dirname, '../tsconfig.spec.json');
 process.env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true';
 
-const { app, protocol } = require('electron');
+// Some Linux machines have broken hardware acceleration support.
+if (process.env.ELECTRON_TEST_DISABLE_HARDWARE_ACCELERATION) {
+  app.disableHardwareAcceleration();
+}
 
 v8.setFlagsFromString('--expose_gc');
 app.commandLine.appendSwitch('js-flags', '--expose_gc');
@@ -28,6 +35,12 @@ app.commandLine.appendSwitch('host-resolver-rules', [
   'MAP notfound.localhost2 ~NOTFOUND'
 ].join(', '));
 
+// Enable features required by tests.
+app.commandLine.appendSwitch('enable-features', [
+  // spec/api-web-frame-main-spec.ts
+  'DocumentPolicyIncludeJSCallStacksInCrashReports'
+].join(','));
+
 global.standardScheme = 'app';
 global.zoomScheme = 'zoom';
 global.serviceWorkerScheme = 'sw';
@@ -35,6 +48,7 @@ protocol.registerSchemesAsPrivileged([
   { scheme: global.standardScheme, privileges: { standard: true, secure: true, stream: false } },
   { scheme: global.zoomScheme, privileges: { standard: true, secure: true } },
   { scheme: global.serviceWorkerScheme, privileges: { allowServiceWorkers: true, standard: true, secure: true } },
+  { scheme: 'http-like', privileges: { standard: true, secure: true, corsEnabled: true, supportFetchAPI: true } },
   { scheme: 'cors-blob', privileges: { corsEnabled: true, supportFetchAPI: true } },
   { scheme: 'cors', privileges: { corsEnabled: true, supportFetchAPI: true } },
   { scheme: 'no-cors', privileges: { supportFetchAPI: true } },
@@ -68,6 +82,14 @@ app.whenReady().then(async () => {
     mochaOptions.reporterOptions = {
       reporterEnabled: process.env.MOCHA_MULTI_REPORTERS
     };
+  }
+  // The MOCHA_GREP and MOCHA_INVERT are used in some vendor builds for sharding
+  // tests.
+  if (process.env.MOCHA_GREP) {
+    mochaOptions.grep = process.env.MOCHA_GREP;
+  }
+  if (process.env.MOCHA_INVERT) {
+    mochaOptions.invert = process.env.MOCHA_INVERT === 'true';
   }
   const mocha = new Mocha(mochaOptions);
 
@@ -111,7 +133,7 @@ app.whenReady().then(async () => {
   const validTestPaths = argv.files && argv.files.map(file =>
     path.isAbsolute(file)
       ? path.relative(baseElectronDir, file)
-      : file);
+      : path.normalize(file));
   const filter = (file) => {
     if (!/-spec\.[tj]s$/.test(file)) {
       return false;
@@ -134,10 +156,10 @@ app.whenReady().then(async () => {
   };
 
   const { getFiles } = require('./get-files');
-  const testFiles = await getFiles(__dirname, { filter });
-  testFiles.sort().forEach((file) => {
+  const testFiles = await getFiles(__dirname, filter);
+  for (const file of testFiles.sort()) {
     mocha.addFile(file);
-  });
+  }
 
   if (validTestPaths && validTestPaths.length > 0 && testFiles.length === 0) {
     console.error('Test files were provided, but they did not match any searched files');
@@ -148,7 +170,12 @@ app.whenReady().then(async () => {
   const cb = () => {
     // Ensure the callback is called after runner is defined
     process.nextTick(() => {
-      process.exit(runner.failures);
+      if (process.env.ELECTRON_FORCE_TEST_SUITE_EXIT === 'true') {
+        console.log(`${FAILURE_STATUS_KEY}: ${runner.failures}`);
+        process.kill(process.pid);
+      } else {
+        process.exit(runner.failures);
+      }
     });
   };
 

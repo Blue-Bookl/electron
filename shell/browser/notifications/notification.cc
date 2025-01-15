@@ -4,10 +4,14 @@
 
 #include "shell/browser/notifications/notification.h"
 
+#include "base/environment.h"
 #include "shell/browser/notifications/notification_delegate.h"
 #include "shell/browser/notifications/notification_presenter.h"
 
 namespace electron {
+
+const bool debug_notifications =
+    base::Environment::Create()->HasVar("ELECTRON_DEBUG_NOTIFICATIONS");
 
 NotificationOptions::NotificationOptions() = default;
 NotificationOptions::~NotificationOptions() = default;
@@ -27,10 +31,14 @@ void Notification::NotificationClicked() {
   Destroy();
 }
 
-void Notification::NotificationDismissed() {
+void Notification::NotificationDismissed(bool should_destroy) {
   if (delegate())
     delegate()->NotificationClosed();
-  Destroy();
+
+  set_is_dismissed(true);
+
+  if (should_destroy)
+    Destroy();
 }
 
 void Notification::NotificationFailed(const std::string& error) {
@@ -40,7 +48,9 @@ void Notification::NotificationFailed(const std::string& error) {
 }
 
 void Notification::Destroy() {
-  presenter()->RemoveNotification(this);
+  if (presenter()) {
+    presenter()->RemoveNotification(this);
+  }
 }
 
 }  // namespace electron

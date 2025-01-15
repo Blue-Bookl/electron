@@ -12,9 +12,7 @@
 #include "base/functional/bind.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
-#include "base/strings/utf_string_conversions.h"
-#include "chrome/common/chrome_paths.h"
+#include "content/public/browser/browser_thread.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_frontend_host.h"
 #include "content/public/browser/devtools_socket_factory.h"
@@ -28,6 +26,7 @@
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
 #include "shell/browser/browser.h"
+#include "shell/browser/electron_browser_context.h"
 #include "shell/common/electron_paths.h"
 #include "third_party/inspector_protocol/crdtp/dispatch.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -51,13 +50,13 @@ class TCPServerSocketFactory : public content::DevToolsSocketFactory {
     auto socket =
         std::make_unique<net::TCPServerSocket>(nullptr, net::NetLogSource());
     if (socket->ListenWithAddressAndPort(address_, port_, 10) != net::OK)
-      return std::unique_ptr<net::ServerSocket>();
+      return {};
 
     return socket;
   }
   std::unique_ptr<net::ServerSocket> CreateForTethering(
       std::string* name) override {
-    return std::unique_ptr<net::ServerSocket>();
+    return {};
   }
 
   std::string address_;
@@ -125,7 +124,8 @@ void DevToolsManagerDelegate::HandleCommand(
 }
 
 scoped_refptr<content::DevToolsAgentHost>
-DevToolsManagerDelegate::CreateNewTarget(const GURL& url, bool for_tab) {
+DevToolsManagerDelegate::CreateNewTarget(const GURL& url,
+                                         TargetType target_type) {
   return nullptr;
 }
 
@@ -136,6 +136,10 @@ std::string DevToolsManagerDelegate::GetDiscoveryPageHTML() {
 
 bool DevToolsManagerDelegate::HasBundledFrontendResources() {
   return true;
+}
+
+content::BrowserContext* DevToolsManagerDelegate::GetDefaultBrowserContext() {
+  return ElectronBrowserContext::From("", false);
 }
 
 }  // namespace electron

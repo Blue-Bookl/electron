@@ -6,8 +6,6 @@
 
 #include <utility>
 
-#include "base/stl_util.h"
-
 namespace electron {
 
 #if BUILDFLAG(IS_MAC)
@@ -98,11 +96,6 @@ bool ElectronMenuModel::GetSharingItemAt(size_t index,
 
 void ElectronMenuModel::SetSharingItem(SharingItem item) {
   sharing_item_.emplace(std::move(item));
-}
-
-const absl::optional<ElectronMenuModel::SharingItem>&
-ElectronMenuModel::GetSharingItem() const {
-  return sharing_item_;
 }
 #endif
 

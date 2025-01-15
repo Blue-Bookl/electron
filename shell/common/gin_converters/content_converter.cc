@@ -5,9 +5,11 @@
 #include "shell/common/gin_converters/content_converter.h"
 
 #include <string>
+#include <string_view>
 
+#include "base/containers/fixed_flat_map.h"
+#include "components/input/native_web_keyboard_event.h"
 #include "content/public/browser/context_menu_params.h"
-#include "content/public/browser/native_web_keyboard_event.h"
 #include "content/public/browser/web_contents.h"
 #include "shell/browser/api/electron_api_web_contents.h"
 #include "shell/browser/web_contents_permission_helper.h"
@@ -18,41 +20,50 @@
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "third_party/blink/public/common/context_menu_data/untrustworthy_context_menu_params.h"
+#include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/events/keycodes/dom/keycode_converter.h"
 #include "ui/events/keycodes/keyboard_code_conversion.h"
 
 namespace gin {
 
-template <>
-struct Converter<ui::MenuSourceType> {
-  static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
-                                   const ui::MenuSourceType& in) {
-    switch (in) {
-      case ui::MENU_SOURCE_MOUSE:
-        return StringToV8(isolate, "mouse");
-      case ui::MENU_SOURCE_KEYBOARD:
-        return StringToV8(isolate, "keyboard");
-      case ui::MENU_SOURCE_TOUCH:
-        return StringToV8(isolate, "touch");
-      case ui::MENU_SOURCE_TOUCH_EDIT_MENU:
-        return StringToV8(isolate, "touchMenu");
-      case ui::MENU_SOURCE_LONG_PRESS:
-        return StringToV8(isolate, "longPress");
-      case ui::MENU_SOURCE_LONG_TAP:
-        return StringToV8(isolate, "longTap");
-      case ui::MENU_SOURCE_TOUCH_HANDLE:
-        return StringToV8(isolate, "touchHandle");
-      case ui::MENU_SOURCE_STYLUS:
-        return StringToV8(isolate, "stylus");
-      case ui::MENU_SOURCE_ADJUST_SELECTION:
-        return StringToV8(isolate, "adjustSelection");
-      case ui::MENU_SOURCE_ADJUST_SELECTION_RESET:
-        return StringToV8(isolate, "adjustSelectionReset");
-      default:
-        return StringToV8(isolate, "none");
-    }
-  }
-};
+static constexpr auto MenuSourceTypes =
+    base::MakeFixedFlatMap<std::string_view, ui::mojom::MenuSourceType>({
+        {"adjustSelection", ui::mojom::MenuSourceType::kAdjustSelection},
+        {"adjustSelectionReset",
+         ui::mojom::MenuSourceType::kAdjustSelectionReset},
+        {"keyboard", ui::mojom::MenuSourceType::kKeyboard},
+        {"longPress", ui::mojom::MenuSourceType::kLongPress},
+        {"longTap", ui::mojom::MenuSourceType::kLongTap},
+        {"mouse", ui::mojom::MenuSourceType::kMouse},
+        {"none", ui::mojom::MenuSourceType::kNone},
+        {"stylus", ui::mojom::MenuSourceType::kStylus},
+        {"touch", ui::mojom::MenuSourceType::kTouch},
+        {"touchHandle", ui::mojom::MenuSourceType::kTouchHandle},
+        {"touchMenu", ui::mojom::MenuSourceType::kTouchEditMenu},
+    });
+
+// let us know when upstream changes & we need to update MenuSourceTypes
+static_assert(std::size(MenuSourceTypes) ==
+              static_cast<int32_t>(ui::mojom::MenuSourceType::kMaxValue) + 1);
+
+// static
+v8::Local<v8::Value> Converter<ui::mojom::MenuSourceType>::ToV8(
+    v8::Isolate* isolate,
+    const ui::mojom::MenuSourceType& in) {
+  for (auto const& [key, val] : MenuSourceTypes)
+    if (in == val)
+      return StringToV8(isolate, key);
+  return {};
+}
+
+// static
+bool Converter<ui::mojom::MenuSourceType>::FromV8(
+    v8::Isolate* isolate,
+    v8::Local<v8::Value> val,
+    ui::mojom::MenuSourceType* out) {
+  return FromV8WithLookup(isolate, val, MenuSourceTypes, out);
+}
 
 // static
 v8::Local<v8::Value> Converter<blink::mojom::MenuItem::Type>::ToV8(
@@ -77,9 +88,8 @@ v8::Local<v8::Value> Converter<blink::mojom::MenuItem::Type>::ToV8(
 v8::Local<v8::Value> Converter<ContextMenuParamsWithRenderFrameHost>::ToV8(
     v8::Isolate* isolate,
     const ContextMenuParamsWithRenderFrameHost& val) {
-  const auto& params = val.first;
-  content::RenderFrameHost* render_frame_host = val.second;
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto [params, render_frame_host, optional_suggestions] = val;
+  auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
   dict.SetGetter("frame", render_frame_host, v8::DontEnum);
   dict.Set("x", params.x);
   dict.Set("y", params.y);
@@ -103,14 +113,18 @@ v8::Local<v8::Value> Converter<ContextMenuParamsWithRenderFrameHost>::ToV8(
   dict.Set("misspelledWord", params.misspelled_word);
   dict.Set("selectionRect", params.selection_rect);
 #if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
-  dict.Set("dictionarySuggestions", params.dictionary_suggestions);
+  if (optional_suggestions) {
+    dict.Set("dictionarySuggestions", optional_suggestions.value());
+  } else {
+    dict.Set("dictionarySuggestions", params.dictionary_suggestions);
+  }
   dict.Set("spellcheckEnabled", params.spellcheck_enabled);
 #else
   dict.Set("spellcheckEnabled", false);
 #endif
   dict.Set("frameCharset", params.frame_charset);
   dict.Set("referrerPolicy", params.referrer_policy);
-  dict.Set("inputFieldType", params.input_field_type);
+  dict.Set("formControlType", params.form_control_type);
   dict.Set("menuSourceType", params.source_type);
 
   return gin::ConvertToV8(isolate, dict);
@@ -142,8 +156,8 @@ v8::Local<v8::Value> Converter<blink::PermissionType>::ToV8(
   // Not all permissions are currently used by Electron but this will future
   // proof these conversions.
   switch (val) {
-    case blink::PermissionType::ACCESSIBILITY_EVENTS:
-      return StringToV8(isolate, "accessibility-events");
+    case blink::PermissionType::AUTOMATIC_FULLSCREEN:
+      return StringToV8(isolate, "automatic-fullscreen");
     case blink::PermissionType::AR:
       return StringToV8(isolate, "ar");
     case blink::PermissionType::BACKGROUND_FETCH:
@@ -156,8 +170,12 @@ v8::Local<v8::Value> Converter<blink::PermissionType>::ToV8(
       return StringToV8(isolate, "clipboard-sanitized-write");
     case blink::PermissionType::LOCAL_FONTS:
       return StringToV8(isolate, "local-fonts");
+    case blink::PermissionType::HAND_TRACKING:
+      return StringToV8(isolate, "hand-tracking");
     case blink::PermissionType::IDLE_DETECTION:
       return StringToV8(isolate, "idle-detection");
+    case blink::PermissionType::KEYBOARD_LOCK:
+      return StringToV8(isolate, "keyboardLock");
     case blink::PermissionType::MIDI_SYSEX:
       return StringToV8(isolate, "midiSysex");
     case blink::PermissionType::NFC:
@@ -176,6 +194,8 @@ v8::Local<v8::Value> Converter<blink::PermissionType>::ToV8(
     case blink::PermissionType::AUDIO_CAPTURE:
     case blink::PermissionType::VIDEO_CAPTURE:
       return StringToV8(isolate, "media");
+    case blink::PermissionType::POINTER_LOCK:
+      return StringToV8(isolate, "pointerLock");
     case blink::PermissionType::PROTECTED_MEDIA_IDENTIFIER:
       return StringToV8(isolate, "mediaKeySystem");
     case blink::PermissionType::MIDI:
@@ -196,13 +216,21 @@ v8::Local<v8::Value> Converter<blink::PermissionType>::ToV8(
       return StringToV8(isolate, "display-capture");
     case blink::PermissionType::TOP_LEVEL_STORAGE_ACCESS:
       return StringToV8(isolate, "top-level-storage-access");
+    case blink::PermissionType::CAPTURED_SURFACE_CONTROL:
+      return StringToV8(isolate, "captured-surface-control");
+    case blink::PermissionType::SMART_CARD:
+      return StringToV8(isolate, "smart-card");
+    case blink::PermissionType::WEB_PRINTING:
+      return StringToV8(isolate, "web-printing");
+    case blink::PermissionType::SPEAKER_SELECTION:
+      return StringToV8(isolate, "speaker-selection");
+    case blink::PermissionType::WEB_APP_INSTALLATION:
+      return StringToV8(isolate, "web-app-installation");
     case blink::PermissionType::NUM:
       break;
   }
 
   switch (static_cast<PermissionType>(val)) {
-    case PermissionType::POINTER_LOCK:
-      return StringToV8(isolate, "pointerLock");
     case PermissionType::FULLSCREEN:
       return StringToV8(isolate, "fullscreen");
     case PermissionType::OPEN_EXTERNAL:
@@ -213,6 +241,8 @@ v8::Local<v8::Value> Converter<blink::PermissionType>::ToV8(
       return StringToV8(isolate, "hid");
     case PermissionType::USB:
       return StringToV8(isolate, "usb");
+    case PermissionType::FILE_SYSTEM:
+      return StringToV8(isolate, "fileSystem");
     default:
       return StringToV8(isolate, "unknown");
   }
@@ -222,20 +252,13 @@ v8::Local<v8::Value> Converter<blink::PermissionType>::ToV8(
 bool Converter<content::StopFindAction>::FromV8(v8::Isolate* isolate,
                                                 v8::Local<v8::Value> val,
                                                 content::StopFindAction* out) {
-  std::string action;
-  if (!ConvertFromV8(isolate, val, &action))
-    return false;
-
-  if (action == "clearSelection")
-    *out = content::STOP_FIND_ACTION_CLEAR_SELECTION;
-  else if (action == "keepSelection")
-    *out = content::STOP_FIND_ACTION_KEEP_SELECTION;
-  else if (action == "activateSelection")
-    *out = content::STOP_FIND_ACTION_ACTIVATE_SELECTION;
-  else
-    return false;
-
-  return true;
+  using Val = content::StopFindAction;
+  static constexpr auto Lookup = base::MakeFixedFlatMap<std::string_view, Val>({
+      {"activateSelection", Val::STOP_FIND_ACTION_ACTIVATE_SELECTION},
+      {"clearSelection", Val::STOP_FIND_ACTION_CLEAR_SELECTION},
+      {"keepSelection", Val::STOP_FIND_ACTION_KEEP_SELECTION},
+  });
+  return FromV8WithLookup(isolate, val, Lookup, out);
 }
 
 // static
@@ -269,7 +292,7 @@ bool Converter<content::WebContents*>::FromV8(v8::Isolate* isolate,
 v8::Local<v8::Value> Converter<content::Referrer>::ToV8(
     v8::Isolate* isolate,
     const content::Referrer& val) {
-  gin_helper::Dictionary dict = gin::Dictionary::CreateEmpty(isolate);
+  auto dict = gin_helper::Dictionary::CreateEmpty(isolate);
   dict.Set("url", ConvertToV8(isolate, val.url));
   dict.Set("policy", ConvertToV8(isolate, val.policy));
   return gin::ConvertToV8(isolate, dict);
@@ -293,23 +316,23 @@ bool Converter<content::Referrer>::FromV8(v8::Isolate* isolate,
 }
 
 // static
-bool Converter<content::NativeWebKeyboardEvent>::FromV8(
+bool Converter<input::NativeWebKeyboardEvent>::FromV8(
     v8::Isolate* isolate,
     v8::Local<v8::Value> val,
-    content::NativeWebKeyboardEvent* out) {
+    input::NativeWebKeyboardEvent* out) {
   gin_helper::Dictionary dict;
   if (!ConvertFromV8(isolate, val, &dict))
     return false;
   if (!ConvertFromV8(isolate, val, static_cast<blink::WebKeyboardEvent*>(out)))
     return false;
-  dict.Get("skipInBrowser", &out->skip_in_browser);
+  dict.Get("skipIfUnhandled", &out->skip_if_unhandled);
   return true;
 }
 
 // static
-v8::Local<v8::Value> Converter<content::NativeWebKeyboardEvent>::ToV8(
+v8::Local<v8::Value> Converter<input::NativeWebKeyboardEvent>::ToV8(
     v8::Isolate* isolate,
-    const content::NativeWebKeyboardEvent& in) {
+    const input::NativeWebKeyboardEvent& in) {
   return ConvertToV8(isolate, static_cast<blink::WebKeyboardEvent>(in));
 }
 

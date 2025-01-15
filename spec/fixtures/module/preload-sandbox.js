@@ -1,5 +1,5 @@
 (function () {
-  const { setImmediate } = require('timers');
+  const { setImmediate } = require('node:timers');
   const { ipcRenderer } = require('electron');
   window.ipcRenderer = ipcRenderer;
   window.setImmediate = setImmediate;
@@ -32,10 +32,12 @@
         systemMemoryInfo: invoke(() => process.getSystemMemoryInfo()),
         systemVersion: invoke(() => process.getSystemVersion()),
         cpuUsage: invoke(() => process.getCPUUsage()),
-        ioCounters: invoke(() => process.getIOCounters()),
         uptime: invoke(() => process.uptime()),
+        // eslint-disable-next-line unicorn/prefer-node-protocol
         nodeEvents: invoke(() => require('events') === require('node:events')),
+        // eslint-disable-next-line unicorn/prefer-node-protocol
         nodeTimers: invoke(() => require('timers') === require('node:timers')),
+        // eslint-disable-next-line unicorn/prefer-node-protocol
         nodeUrl: invoke(() => require('url') === require('node:url')),
         env: process.env,
         execPath: process.execPath,
@@ -55,6 +57,7 @@
       ipcRenderer.on('touch-the-opener', () => {
         let errorMessage = null;
         try {
+          // eslint-disable-next-line @typescript-eslint/no-unused-vars
           const openerDoc = opener.document;
         } catch (error) {
           errorMessage = error.message;

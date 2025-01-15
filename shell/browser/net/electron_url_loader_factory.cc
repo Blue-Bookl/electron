@@ -4,14 +4,14 @@
 
 #include "shell/browser/net/electron_url_loader_factory.h"
 
-#include <list>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
-#include "base/guid.h"
+#include "base/containers/fixed_flat_map.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/strings/stringprintf.h"
+#include "base/uuid.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "mojo/public/cpp/system/data_pipe_producer.h"
@@ -32,6 +32,8 @@
 #include "shell/common/gin_converters/gurl_converter.h"
 #include "shell/common/gin_converters/net_converter.h"
 #include "shell/common/gin_converters/value_converter.h"
+#include "shell/common/gin_helper/dictionary.h"
+#include "third_party/abseil-cpp/absl/strings/str_format.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 
 #include "shell/common/node_includes.h"
@@ -45,22 +47,17 @@ struct Converter<electron::ProtocolType> {
   static bool FromV8(v8::Isolate* isolate,
                      v8::Local<v8::Value> val,
                      electron::ProtocolType* out) {
-    std::string type;
-    if (!ConvertFromV8(isolate, val, &type))
-      return false;
-    if (type == "buffer")
-      *out = electron::ProtocolType::kBuffer;
-    else if (type == "string")
-      *out = electron::ProtocolType::kString;
-    else if (type == "file")
-      *out = electron::ProtocolType::kFile;
-    else if (type == "http")
-      *out = electron::ProtocolType::kHttp;
-    else if (type == "stream")
-      *out = electron::ProtocolType::kStream;
-    else  // note "free" is internal type, not allowed to be passed from user
-      return false;
-    return true;
+    using Val = electron::ProtocolType;
+    static constexpr auto Lookup =
+        base::MakeFixedFlatMap<std::string_view, Val>({
+            // note "free" is internal type, not allowed to be passed from user
+            {"buffer", Val::kBuffer},
+            {"file", Val::kFile},
+            {"http", Val::kHttp},
+            {"stream", Val::kStream},
+            {"string", Val::kString},
+        });
+    return FromV8WithLookup(isolate, val, Lookup, out);
   }
 };
 
@@ -120,9 +117,9 @@ network::mojom::URLResponseHeadPtr ToResponseHead(
   int status_code = net::HTTP_OK;
   dict.Get("statusCode", &status_code);
   head->headers = base::MakeRefCounted<net::HttpResponseHeaders>(
-      base::StringPrintf("HTTP/1.1 %d %s", status_code,
-                         net::GetHttpReasonPhrase(
-                             static_cast<net::HttpStatusCode>(status_code))));
+      absl::StrFormat("HTTP/1.1 %d %s", status_code,
+                      net::GetHttpReasonPhrase(
+                          static_cast<net::HttpStatusCode>(status_code))));
 
   dict.Get("charset", &head->charset);
   bool has_mime_type = dict.Get("mimeType", &head->mime_type);
@@ -215,7 +212,7 @@ void ElectronURLLoaderFactory::RedirectedRequest::FollowRedirect(
     const std::vector<std::string>& removed_headers,
     const net::HttpRequestHeaders& modified_headers,
     const net::HttpRequestHeaders& modified_cors_exempt_headers,
-    const absl::optional<GURL>& new_url) {
+    const std::optional<GURL>& new_url) {
   // Update |request_| with info from the redirect, so that it's accurate
   // The following references code in WorkerScriptLoader::FollowRedirect
   bool should_clear_upload = false;
@@ -552,8 +549,8 @@ void ElectronURLLoaderFactory::StartLoadingHttp(
   v8::Local<v8::Value> value;
   if (dict.Get("session", &value)) {
     if (value->IsNull()) {
-      browser_context =
-          ElectronBrowserContext::From(base::GenerateGUID(), true);
+      browser_context = ElectronBrowserContext::From(
+          base::Uuid::GenerateRandomV4().AsLowercaseString(), true);
     } else {
       gin::Handle<api::Session> session;
       if (gin::ConvertFromV8(dict.isolate(), value, &session) &&
@@ -596,7 +593,7 @@ void ElectronURLLoaderFactory::StartLoadingStream(
     // Note that We must submit a empty body otherwise NetworkService would
     // crash.
     client_remote->OnReceiveResponse(std::move(head), std::move(consumer),
-                                     absl::nullopt);
+                                     std::nullopt);
     producer.reset();  // The data pipe is empty.
     client_remote->OnComplete(network::URLLoaderCompletionStatus(net::OK));
     return;
@@ -644,7 +641,7 @@ void ElectronURLLoaderFactory::SendContents(
   }
 
   client_remote->OnReceiveResponse(std::move(head), std::move(consumer),
-                                   absl::nullopt);
+                                   std::nullopt);
 
   auto write_data = std::make_unique<WriteData>();
   write_data->client = std::move(client_remote);
@@ -653,11 +650,11 @@ void ElectronURLLoaderFactory::SendContents(
       std::make_unique<mojo::DataPipeProducer>(std::move(producer));
   auto* producer_ptr = write_data->producer.get();
 
-  base::StringPiece string_piece(write_data->data);
+  std::string_view string_view(write_data->data);
   producer_ptr->Write(
       std::make_unique<mojo::StringDataSource>(
-          string_piece, mojo::StringDataSource::AsyncWritingMode::
-                            STRING_STAYS_VALID_UNTIL_COMPLETION),
+          string_view, mojo::StringDataSource::AsyncWritingMode::
+                           STRING_STAYS_VALID_UNTIL_COMPLETION),
       base::BindOnce(OnWrite, std::move(write_data)));
 }
 

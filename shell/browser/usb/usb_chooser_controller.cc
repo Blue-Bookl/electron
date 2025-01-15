@@ -4,27 +4,26 @@
 
 #include "shell/browser/usb/usb_chooser_controller.h"
 
-#include <stddef.h>
+#include <algorithm>
+#include <cstddef>
 #include <utility>
 
 #include "base/functional/bind.h"
-#include "base/strings/stringprintf.h"
-#include "base/strings/utf_string_conversions.h"
-#include "build/build_config.h"
 #include "components/strings/grit/components_strings.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "gin/data_object_builder.h"
 #include "services/device/public/cpp/usb/usb_utils.h"
 #include "services/device/public/mojom/usb_enumeration_options.mojom.h"
+#include "shell/browser/api/electron_api_session.h"
 #include "shell/browser/javascript_environment.h"
+#include "shell/browser/usb/electron_usb_delegate.h"
 #include "shell/browser/usb/usb_chooser_context_factory.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_converters/content_converter.h"
 #include "shell/common/gin_converters/frame_converter.h"
 #include "shell/common/gin_converters/usb_device_info_converter.h"
-#include "shell/common/node_includes.h"
-#include "shell/common/process_util.h"
+#include "shell/common/node_util.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -35,12 +34,12 @@ namespace electron {
 
 UsbChooserController::UsbChooserController(
     RenderFrameHost* render_frame_host,
-    std::vector<device::mojom::UsbDeviceFilterPtr> device_filters,
+    blink::mojom::WebUsbRequestDeviceOptionsPtr options,
     blink::mojom::WebUsbService::GetPermissionCallback callback,
     content::WebContents* web_contents,
     base::WeakPtr<ElectronUsbDelegate> usb_delegate)
     : WebContentsObserver(web_contents),
-      filters_(std::move(device_filters)),
+      options_(std::move(options)),
       callback_(std::move(callback)),
       origin_(render_frame_host->GetMainFrame()->GetLastCommittedOrigin()),
       usb_delegate_(usb_delegate),
@@ -91,10 +90,9 @@ void UsbChooserController::OnDeviceChosen(gin::Arguments* args) {
     if (device_info) {
       RunCallback(device_info->Clone());
     } else {
-      v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
-      node::Environment* env = node::Environment::GetCurrent(isolate);
-      EmitWarning(env, "The device id " + device_id + " was not found.",
-                  "UnknownUsbDeviceId");
+      util::EmitWarning(
+          base::StrCat({"The device id ", device_id, " was not found."}),
+          "UnknownUsbDeviceId");
       RunCallback(/*device_info=*/nullptr);
     }
   }
@@ -105,7 +103,7 @@ void UsbChooserController::OnBrowserContextShutdown() {
 }
 
 // Get a list of devices that can be shown in the chooser bubble UI for
-// user to grant permsssion.
+// user to grant permission.
 void UsbChooserController::GotUsbDeviceList(
     std::vector<::device::mojom::UsbDeviceInfoPtr> devices) {
   // Listen to UsbChooserContext for OnDeviceAdded/Removed events after the
@@ -118,7 +116,13 @@ void UsbChooserController::GotUsbDeviceList(
   if (session) {
     auto* rfh = content::RenderFrameHost::FromID(render_frame_host_id_);
     v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
-    v8::HandleScope scope(isolate);
+    v8::HandleScope handle_scope{isolate};
+
+    // "select-usb-device" should respect |filters|.
+    std::erase_if(devices, [this](const auto& device_info) {
+      return !DisplayDevice(*device_info);
+    });
+
     v8::Local<v8::Object> details = gin::DataObjectBuilder(isolate)
                                         .Set("deviceList", devices)
                                         .Set("frame", rfh)
@@ -136,8 +140,16 @@ void UsbChooserController::GotUsbDeviceList(
 
 bool UsbChooserController::DisplayDevice(
     const device::mojom::UsbDeviceInfo& device_info) const {
-  if (!device::UsbDeviceFilterMatchesAny(filters_, device_info))
+  if (!device::UsbDeviceFilterMatchesAny(options_->filters, device_info)) {
     return false;
+  }
+
+  if (std::ranges::any_of(
+          options_->exclusion_filters, [&device_info](const auto& filter) {
+            return device::UsbDeviceFilterMatches(*filter, device_info);
+          })) {
+    return false;
+  }
 
   return true;
 }

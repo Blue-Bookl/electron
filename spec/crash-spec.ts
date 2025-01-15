@@ -1,8 +1,10 @@
 import { expect } from 'chai';
-import * as cp from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
-import { ifit } from './lib/spec-helpers';
+
+import * as cp from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
+import { ifit, waitUntil } from './lib/spec-helpers';
 
 const fixturePath = path.resolve(__dirname, 'fixtures', 'crash-cases');
 
@@ -40,9 +42,13 @@ const shouldRunCase = (crashCase: string) => {
     case 'quit-on-crashed-event': {
       return (process.platform !== 'win32' || process.arch !== 'ia32');
     }
-    // TODO(jkleinsc) fix this test on Linux on arm/arm64
+    // TODO(jkleinsc) fix this test on Linux on arm/arm64 and 32bit windows
     case 'js-execute-iframe': {
-      return (process.platform !== 'linux' || (process.arch !== 'arm64' && process.arch !== 'arm'));
+      if (process.platform === 'win32') {
+        return process.arch !== 'ia32';
+      } else {
+        return (process.platform !== 'linux' || (process.arch !== 'arm64' && process.arch !== 'arm'));
+      }
     }
     default: {
       return true;
@@ -51,11 +57,11 @@ const shouldRunCase = (crashCase: string) => {
 };
 
 describe('crash cases', () => {
-  afterEach(() => {
+  afterEach(async () => {
     for (const child of children) {
       child.kill();
     }
-    expect(children).to.have.lengthOf(0, 'all child processes should have exited cleanly');
+    await waitUntil(() => (children.length === 0));
     children.length = 0;
   });
   const cases = fs.readdirSync(fixturePath);

@@ -5,9 +5,10 @@
 #ifndef ELECTRON_SHELL_COMMON_GIN_HELPER_MICROTASKS_SCOPE_H_
 #define ELECTRON_SHELL_COMMON_GIN_HELPER_MICROTASKS_SCOPE_H_
 
-#include <memory>
+#include <optional>
 
-#include "v8/include/v8.h"
+#include "v8/include/v8-forward.h"
+#include "v8/include/v8-microtask-queue.h"
 
 namespace gin_helper {
 
@@ -15,11 +16,10 @@ namespace gin_helper {
 // In the render process creates a v8::MicrotasksScope.
 class MicrotasksScope {
  public:
-  explicit MicrotasksScope(v8::Isolate* isolate,
-                           v8::MicrotaskQueue* microtask_queue,
-                           bool ignore_browser_checkpoint = false,
-                           v8::MicrotasksScope::Type scope_type =
-                               v8::MicrotasksScope::kRunMicrotasks);
+  MicrotasksScope(v8::Isolate* isolate,
+                  v8::MicrotaskQueue* microtask_queue,
+                  bool ignore_browser_checkpoint,
+                  v8::MicrotasksScope::Type scope_type);
   ~MicrotasksScope();
 
   // disable copy
@@ -27,7 +27,7 @@ class MicrotasksScope {
   MicrotasksScope& operator=(const MicrotasksScope&) = delete;
 
  private:
-  std::unique_ptr<v8::MicrotasksScope> v8_microtasks_scope_;
+  std::optional<v8::MicrotasksScope> v8_microtasks_scope_;
 };
 
 }  // namespace gin_helper

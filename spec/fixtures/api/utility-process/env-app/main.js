@@ -1,5 +1,6 @@
 const { app, utilityProcess } = require('electron');
-const path = require('path');
+
+const path = require('node:path');
 
 app.whenReady().then(() => {
   let child = null;

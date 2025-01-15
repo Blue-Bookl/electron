@@ -5,13 +5,17 @@
 #include "shell/browser/ui/win/taskbar_host.h"
 
 #include <objbase.h>
+#include <array>
 #include <string>
 
-#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/scoped_gdi_object.h"
 #include "shell/browser/native_window.h"
+#include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkCanvas.h"
+#include "third_party/skia/include/core/SkImage.h"
+#include "third_party/skia/include/core/SkRRect.h"
 #include "ui/display/win/screen_win.h"
 #include "ui/gfx/icon_util.h"
 
@@ -22,10 +26,10 @@ namespace {
 // From MSDN:
 // https://msdn.microsoft.com/en-us/library/windows/desktop/dd378460(v=vs.85).aspx#thumbbars
 // The thumbnail toolbar has a maximum of seven buttons due to the limited room.
-const size_t kMaxButtonsCount = 7;
+constexpr size_t kMaxButtonsCount = 7U;
 
 // The base id of Thumbar button.
-const int kButtonIdBase = 40001;
+constexpr int kButtonIdBase = 40001;
 
 bool GetThumbarButtonFlags(const std::vector<std::string>& flags,
                            THUMBBUTTONFLAGS* out) {
@@ -69,10 +73,10 @@ bool TaskbarHost::SetThumbarButtons(HWND window,
   // The number of buttons in thumbar can not be changed once it is created,
   // so we have to claim kMaxButtonsCount buttons initially in case users add
   // more buttons later.
-  base::win::ScopedHICON icons[kMaxButtonsCount] = {};
-  THUMBBUTTON thumb_buttons[kMaxButtonsCount] = {};
+  auto icons = std::array<base::win::ScopedHICON, kMaxButtonsCount>{};
+  auto thumb_buttons = std::array<THUMBBUTTON, kMaxButtonsCount>{};
 
-  for (size_t i = 0; i < kMaxButtonsCount; ++i) {
+  for (size_t i = 0U; i < kMaxButtonsCount; ++i) {
     THUMBBUTTON& thumb_button = thumb_buttons[i];
 
     // Set ID.
@@ -115,10 +119,11 @@ bool TaskbarHost::SetThumbarButtons(HWND window,
   // Finally add them to taskbar.
   HRESULT r;
   if (thumbar_buttons_added_) {
-    r = taskbar_->ThumbBarUpdateButtons(window, kMaxButtonsCount,
-                                        thumb_buttons);
+    r = taskbar_->ThumbBarUpdateButtons(window, thumb_buttons.size(),
+                                        thumb_buttons.data());
   } else {
-    r = taskbar_->ThumbBarAddButtons(window, kMaxButtonsCount, thumb_buttons);
+    r = taskbar_->ThumbBarAddButtons(window, thumb_buttons.size(),
+                                     thumb_buttons.data());
   }
 
   thumbar_buttons_added_ = true;
@@ -166,13 +171,56 @@ bool TaskbarHost::SetProgressBar(HWND window,
   return success;
 }
 
+// Adapted from SetOverlayIcon in
+// chrome/browser/taskbar/taskbar_decorator_win.cc.
 bool TaskbarHost::SetOverlayIcon(HWND window,
-                                 const SkBitmap& overlay,
+                                 const SkBitmap& bitmap,
                                  const std::string& text) {
   if (!InitializeTaskbar())
     return false;
 
-  base::win::ScopedHICON icon(IconUtil::CreateHICONFromSkBitmap(overlay));
+  base::win::ScopedGDIObject<HICON> icon;
+  if (!bitmap.isNull()) {
+    DCHECK_GE(bitmap.width(), bitmap.height());
+
+    constexpr int kOverlayIconSize = 16;
+
+    // Maintain aspect ratio on resize, but prefer more square.
+    // (We used to round down here, but rounding up produces nicer results.)
+    const int resized_height =
+        base::ClampCeil(kOverlayIconSize *
+                        (static_cast<float>(bitmap.height()) / bitmap.width()));
+
+    DCHECK_GE(kOverlayIconSize, resized_height);
+    // Since the target size is so small, we use our best resizer.
+    SkBitmap sk_icon = skia::ImageOperations::Resize(
+        bitmap, skia::ImageOperations::RESIZE_LANCZOS3, kOverlayIconSize,
+        resized_height);
+
+    // Paint the resized icon onto a 16x16 canvas otherwise Windows will badly
+    // hammer it to 16x16. We'll use a circular clip to be consistent with the
+    // way profile icons are rendered in the profile switcher.
+    SkBitmap offscreen_bitmap;
+    offscreen_bitmap.allocN32Pixels(kOverlayIconSize, kOverlayIconSize);
+    SkCanvas offscreen_canvas(offscreen_bitmap, SkSurfaceProps{});
+    offscreen_canvas.clear(SK_ColorTRANSPARENT);
+
+    static const SkRRect overlay_icon_clip =
+        SkRRect::MakeOval(SkRect::MakeWH(kOverlayIconSize, kOverlayIconSize));
+    offscreen_canvas.clipRRect(overlay_icon_clip, true);
+
+    // Note: the original code used kOverlayIconSize - resized_height, but in
+    // order to center the icon in the circle clip area, we're going to center
+    // it in the paintable region instead, rounding up to the closest pixel to
+    // avoid smearing.
+    const int y_offset = std::ceilf((kOverlayIconSize - resized_height) / 2.0f);
+    offscreen_canvas.drawImage(sk_icon.asImage(), 0, y_offset);
+
+    icon = IconUtil::CreateHICONFromSkBitmap(offscreen_bitmap);
+    if (!icon.is_valid())
+      return false;
+  }
+
   return SUCCEEDED(taskbar_->SetOverlayIcon(window, icon.get(),
                                             base::UTF8ToWide(text).c_str()));
 }
@@ -182,7 +230,7 @@ bool TaskbarHost::SetThumbnailClip(HWND window, const gfx::Rect& region) {
     return false;
 
   if (region.IsEmpty()) {
-    return SUCCEEDED(taskbar_->SetThumbnailClip(window, NULL));
+    return SUCCEEDED(taskbar_->SetThumbnailClip(window, nullptr));
   } else {
     RECT rect =
         display::win::ScreenWin::DIPToScreenRect(window, region).ToRECT();

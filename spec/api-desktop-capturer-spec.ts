@@ -1,9 +1,11 @@
-import { expect } from 'chai';
 import { screen, desktopCapturer, BrowserWindow } from 'electron/main';
-import { once } from 'events';
-import { setTimeout } from 'timers/promises';
-import { ifdescribe, ifit } from './lib/spec-helpers';
 
+import { expect } from 'chai';
+
+import { once } from 'node:events';
+import { setTimeout } from 'node:timers/promises';
+
+import { ifdescribe, ifit } from './lib/spec-helpers';
 import { closeAllWindows } from './lib/window-helpers';
 
 ifdescribe(!process.arch.includes('arm') && process.platform !== 'win32')('desktopCapturer', () => {
@@ -60,8 +62,8 @@ ifdescribe(!process.arch.includes('arm') && process.platform !== 'win32')('deskt
     const sources = await desktopCapturer.getSources({ types: ['screen'] });
     expect(sources).to.be.an('array').of.length(displays.length);
 
-    for (let i = 0; i < sources.length; i++) {
-      expect(sources[i].display_id).to.equal(displays[i].id.toString());
+    for (const [i, source] of sources.entries()) {
+      expect(source.display_id).to.equal(displays[i].id.toString());
     }
   });
 
@@ -146,6 +148,20 @@ ifdescribe(!process.arch.includes('arm') && process.platform !== 'win32')('deskt
       const sourceIds = source.id.split(':');
       expect(sourceIds[1]).to.not.equal(sourceIds[2]);
     }
+  });
+
+  // Regression test - see https://github.com/electron/electron/issues/43002
+  it('does not affect window resizable state', async () => {
+    w.resizable = false;
+
+    const wShown = once(w, 'show');
+    w.show();
+    await wShown;
+
+    const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] });
+    expect(sources).to.be.an('array').that.is.not.empty();
+
+    expect(w.resizable).to.be.false();
   });
 
   it('moveAbove should move the window at the requested place', async () => {

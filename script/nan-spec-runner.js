@@ -1,6 +1,8 @@
-const cp = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const minimist = require('minimist');
+
+const cp = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const BASE = path.resolve(__dirname, '../..');
 const NAN_DIR = path.resolve(BASE, 'third_party', 'nan');
@@ -9,21 +11,29 @@ const NPX_CMD = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const utils = require('./lib/utils');
 const { YARN_VERSION } = require('./yarn');
 
-if (!process.mainModule) {
+if (!require.main) {
   throw new Error('Must call the nan spec runner directly');
 }
 
-const args = require('minimist')(process.argv.slice(2), {
+const args = minimist(process.argv.slice(2), {
   string: ['only']
 });
+
+const getNodeGypVersion = () => {
+  const nanPackageJSONPath = path.join(NAN_DIR, 'package.json');
+  const nanPackageJSON = JSON.parse(fs.readFileSync(nanPackageJSONPath, 'utf8'));
+  const { devDependencies } = nanPackageJSON;
+  const nodeGypVersion = devDependencies['node-gyp'];
+  return nodeGypVersion || 'latest';
+};
 
 async function main () {
   const outDir = utils.getOutDir({ shouldLog: true });
   const nodeDir = path.resolve(BASE, 'out', outDir, 'gen', 'node_headers');
   const env = {
+    npm_config_msvs_version: '2022',
     ...process.env,
     npm_config_nodedir: nodeDir,
-    npm_config_msvs_version: '2019',
     npm_config_arch: process.env.NPM_CONFIG_ARCH,
     npm_config_yes: 'true'
   };
@@ -57,13 +67,18 @@ async function main () {
   // file and pull cflags_cc from it instead of using bespoke code here?
   // I think it's unlikely to work; but if it does, it would be more futureproof
   const cxxflags = [
-    '-std=c++17',
+    '-std=c++20',
+    '-Wno-trigraphs',
+    '-fno-exceptions',
+    '-fno-rtti',
     '-nostdinc++',
-    `-I"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++')}"`,
-    `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++', 'trunk', 'include')}"`,
-    `-isystem"${path.resolve(BASE, 'buildtools', 'third_party', 'libc++abi', 'trunk', 'include')}"`,
+    `-isystem "${path.resolve(BASE, 'buildtools', 'third_party', 'libc++')}"`,
+    `-isystem "${path.resolve(BASE, 'third_party', 'libc++', 'src', 'include')}"`,
+    `-isystem "${path.resolve(BASE, 'third_party', 'libc++abi', 'src', 'include')}"`,
+    ' -fvisibility-inlines-hidden',
     '-fPIC',
     '-D_LIBCPP_ABI_NAMESPACE=Cr',
+    '-D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_EXTENSIVE',
     ...platformFlags
   ].join(' ');
 
@@ -85,35 +100,41 @@ async function main () {
     env.LDFLAGS = ldflags;
   }
 
-  const { status: buildStatus } = cp.spawnSync(NPX_CMD, ['node-gyp', 'rebuild', '--verbose', '--directory', 'test', '-j', 'max'], {
+  const nodeGypVersion = getNodeGypVersion();
+  const { status: buildStatus, signal } = cp.spawnSync(NPX_CMD, [`node-gyp@${nodeGypVersion}`, 'rebuild', '--verbose', '--directory', 'test', '-j', 'max'], {
     env,
     cwd: NAN_DIR,
-    stdio: 'inherit'
+    stdio: 'inherit',
+    shell: process.platform === 'win32'
   });
 
-  if (buildStatus !== 0) {
+  if (buildStatus !== 0 || signal != null) {
     console.error('Failed to build nan test modules');
-    return process.exit(buildStatus);
+    return process.exit(buildStatus !== 0 ? buildStatus : signal);
   }
 
   const { status: installStatus } = cp.spawnSync(NPX_CMD, [`yarn@${YARN_VERSION}`, 'install'], {
     env,
     cwd: NAN_DIR,
-    stdio: 'inherit'
+    stdio: 'inherit',
+    shell: process.platform === 'win32'
   });
-  if (installStatus !== 0) {
+
+  if (installStatus !== 0 || signal != null) {
     console.error('Failed to install nan node_modules');
-    return process.exit(installStatus);
+    return process.exit(installStatus !== 0 ? installStatus : signal);
   }
 
   const onlyTests = args.only && args.only.split(',');
 
-  const DISABLED_TESTS = [
+  const DISABLED_TESTS = new Set([
     'nannew-test.js',
-    'buffer-test.js'
-  ];
+    'buffer-test.js',
+    // we can't patch this test because it uses CRLF line endings
+    'methodswithdata-test.js'
+  ]);
   const testsToRun = fs.readdirSync(path.resolve(NAN_DIR, 'test', 'js'))
-    .filter(test => !DISABLED_TESTS.includes(test))
+    .filter(test => !DISABLED_TESTS.has(test))
     .filter(test => {
       return !onlyTests || onlyTests.includes(test) || onlyTests.includes(test.replace('.js', '')) || onlyTests.includes(test.replace('-test.js', ''));
     })

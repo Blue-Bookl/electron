@@ -5,10 +5,11 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
-#include "base/command_line.h"
+#include "base/containers/span.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/spellcheck/renderer/spellcheck.h"
@@ -54,6 +55,11 @@
 #include "third_party/blink/renderer/platform/bindings/dom_wrapper_world.h"  // nogncheck
 #include "ui/base/ime/ime_text_span.h"
 #include "url/url_util.h"
+
+#if BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER)
+#include "components/spellcheck/renderer/spellcheck.h"
+#include "components/spellcheck/renderer/spellcheck_provider.h"
+#endif
 
 namespace gin {
 
@@ -104,10 +110,15 @@ bool SpellCheckWord(content::RenderFrame* render_frame,
 
   RendererClientBase* client = RendererClientBase::Get();
 
+  mojo::Remote<spellcheck::mojom::SpellCheckHost> spellcheck_host;
+  render_frame->GetBrowserInterfaceBroker().GetInterface(
+      spellcheck_host.BindNewPipeAndPassReceiver());
+  if (!spellcheck_host.is_bound())
+    return false;
+
   std::u16string w = base::UTF8ToUTF16(word);
-  int id = render_frame->GetRoutingID();
   return client->GetSpellCheck()->SpellCheckWord(
-      w.c_str(), 0, word.size(), id, &start, &length, optional_suggestions);
+      w, *spellcheck_host.get(), &start, &length, optional_suggestions);
 }
 
 #endif
@@ -135,14 +146,17 @@ class ScriptExecutionCallback {
       const v8::Local<v8::Object>& result) {
     v8::MaybeLocal<v8::Value> maybe_result;
     bool success = true;
-    std::string error_message =
+    std::string errmsg =
         "An unknown exception occurred while getting the result of the script";
     {
       v8::TryCatch try_catch(isolate);
       context_bridge::ObjectCache object_cache;
-      maybe_result = PassValueToOtherContext(
-          result->GetCreationContextChecked(), promise_.GetContext(), result,
-          &object_cache, false, 0, BridgeErrorTarget::kSource);
+      v8::Local<v8::Context> source_context =
+          result->GetCreationContextChecked();
+      maybe_result =
+          PassValueToOtherContext(source_context, promise_.GetContext(), result,
+                                  source_context->Global(), &object_cache,
+                                  false, 0, BridgeErrorTarget::kSource);
       if (maybe_result.IsEmpty() || try_catch.HasCaught()) {
         success = false;
       }
@@ -150,7 +164,7 @@ class ScriptExecutionCallback {
         auto message = try_catch.Message();
 
         if (!message.IsEmpty()) {
-          gin::ConvertFromV8(isolate, message->Get(), &error_message);
+          gin::ConvertFromV8(isolate, message->Get(), &errmsg);
         }
       }
     }
@@ -159,10 +173,11 @@ class ScriptExecutionCallback {
       if (callback_)
         std::move(callback_).Run(
             v8::Undefined(isolate),
-            v8::Exception::Error(
-                v8::String::NewFromUtf8(isolate, error_message.c_str())
-                    .ToLocalChecked()));
-      promise_.RejectWithErrorMessage(error_message);
+            v8::Exception::Error(v8::String::NewFromUtf8(
+                                     isolate, errmsg.data(),
+                                     v8::NewStringType::kNormal, errmsg.size())
+                                     .ToLocalChecked()));
+      promise_.RejectWithErrorMessage(errmsg);
     } else {
       v8::Local<v8::Context> context = promise_.GetContext();
       v8::Context::Scope context_scope(context);
@@ -196,7 +211,7 @@ class ScriptExecutionCallback {
           promise_.Resolve(value);
         }
       } else {
-        const char error_message[] =
+        const char errmsg[] =
             "Script failed to execute, this normally means an error "
             "was thrown. Check the renderer console for the error.";
         if (!callback_.is_null()) {
@@ -205,13 +220,12 @@ class ScriptExecutionCallback {
           std::move(callback_).Run(
               v8::Undefined(isolate),
               v8::Exception::Error(
-                  v8::String::NewFromUtf8(isolate, error_message)
-                      .ToLocalChecked()));
+                  v8::String::NewFromUtf8Literal(isolate, errmsg)));
         }
-        promise_.RejectWithErrorMessage(error_message);
+        promise_.RejectWithErrorMessage(errmsg);
       }
     } else {
-      const char error_message[] =
+      const char errmsg[] =
           "WebFrame was removed before script could run. This normally means "
           "the underlying frame was destroyed";
       if (!callback_.is_null()) {
@@ -219,10 +233,10 @@ class ScriptExecutionCallback {
         v8::Context::Scope context_scope(context);
         std::move(callback_).Run(
             v8::Undefined(isolate),
-            v8::Exception::Error(v8::String::NewFromUtf8(isolate, error_message)
-                                     .ToLocalChecked()));
+            v8::Exception::Error(
+                v8::String::NewFromUtf8Literal(isolate, errmsg)));
       }
-      promise_.RejectWithErrorMessage(error_message);
+      promise_.RejectWithErrorMessage(errmsg);
     }
     delete this;
   }
@@ -234,8 +248,8 @@ class ScriptExecutionCallback {
 
 class FrameSetSpellChecker : public content::RenderFrameVisitor {
  public:
-  FrameSetSpellChecker(SpellCheckClient* spell_check_client,
-                       content::RenderFrame* main_frame)
+  FrameSetSpellChecker(raw_ptr<SpellCheckClient> spell_check_client,
+                       raw_ptr<content::RenderFrame> main_frame)
       : spell_check_client_(spell_check_client), main_frame_(main_frame) {
     content::RenderFrame::ForEach(this);
     main_frame->GetWebFrame()->SetSpellCheckPanelHostClient(spell_check_client);
@@ -254,11 +268,11 @@ class FrameSetSpellChecker : public content::RenderFrameVisitor {
   }
 
  private:
-  SpellCheckClient* spell_check_client_;
-  content::RenderFrame* main_frame_;
+  raw_ptr<SpellCheckClient> spell_check_client_;
+  raw_ptr<content::RenderFrame> main_frame_;
 };
 
-class SpellCheckerHolder final : public content::RenderFrameObserver {
+class SpellCheckerHolder final : private content::RenderFrameObserver {
  public:
   // Find existing holder for the |render_frame|.
   static SpellCheckerHolder* FromRenderFrame(
@@ -313,10 +327,8 @@ class SpellCheckerHolder final : public content::RenderFrameObserver {
   std::unique_ptr<SpellCheckClient> spell_check_client_;
 };
 
-}  // namespace
-
-class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
-                         public content::RenderFrameObserver {
+class WebFrameRenderer final : public gin::Wrappable<WebFrameRenderer>,
+                               private content::RenderFrameObserver {
  public:
   static gin::WrapperInfo kWrapperInfo;
 
@@ -383,7 +395,7 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
 
  private:
   bool MaybeGetRenderFrame(v8::Isolate* isolate,
-                           const std::string& method_name,
+                           const std::string_view method_name,
                            content::RenderFrame** render_frame_ptr) {
     std::string error_msg;
     if (!MaybeGetRenderFrame(&error_msg, method_name, render_frame_ptr)) {
@@ -394,13 +406,12 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
   }
 
   bool MaybeGetRenderFrame(std::string* error_msg,
-                           const std::string& method_name,
+                           const std::string_view method_name,
                            content::RenderFrame** render_frame_ptr) {
     auto* frame = render_frame();
     if (!frame) {
-      *error_msg = "Render frame was torn down before webFrame." + method_name +
-                   " could be "
-                   "executed";
+      *error_msg = base::ToString("Render frame was torn down before webFrame.",
+                                  method_name, " could be executed");
       return false;
     }
     *render_frame_ptr = frame;
@@ -458,12 +469,12 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
       return;
     }
 
-    SetZoomLevel(thrower.isolate(), blink::PageZoomFactorToZoomLevel(factor));
+    SetZoomLevel(thrower.isolate(), blink::ZoomFactorToZoomLevel(factor));
   }
 
   double GetZoomFactor(v8::Isolate* isolate) {
     double zoom_level = GetZoomLevel(isolate);
-    return blink::PageZoomLevelToZoomFactor(zoom_level);
+    return blink::ZoomLevelToZoomFactor(zoom_level);
   }
 
   v8::Local<v8::Value> GetWebPreference(v8::Isolate* isolate,
@@ -581,7 +592,7 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
 
     content::RenderFrame* render_frame;
     if (!MaybeGetRenderFrame(isolate, "insertCSS", &render_frame))
-      return std::u16string();
+      return {};
 
     blink::WebFrame* web_frame = render_frame->GetWebFrame();
     if (web_frame->IsWebLocalFrame()) {
@@ -591,7 +602,7 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
                             css_origin)
           .Utf16();
     }
-    return std::u16string();
+    return {};
   }
 
   void RemoveInsertedCSS(v8::Isolate* isolate, const std::u16string& key) {
@@ -643,7 +654,7 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
                                              std::move(completion_callback));
 
     render_frame->GetWebFrame()->RequestExecuteScript(
-        blink::DOMWrapperWorld::kMainWorldId, base::make_span(&source, 1u),
+        blink::DOMWrapperWorld::kMainWorldId, base::span_from_ref(source),
         has_user_gesture ? blink::mojom::UserActivationOption::kActivate
                          : blink::mojom::UserActivationOption::kDoNotActivate,
         blink::mojom::EvaluationTiming::kSynchronous,
@@ -705,15 +716,14 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
       script.Get("url", &url);
 
       if (!script.Get("code", &code)) {
-        const char error_message[] = "Invalid 'code'";
+        const char errmsg[] = "Invalid 'code'";
         if (!completion_callback.is_null()) {
           std::move(completion_callback)
               .Run(v8::Undefined(isolate),
                    v8::Exception::Error(
-                       v8::String::NewFromUtf8(isolate, error_message)
-                           .ToLocalChecked()));
+                       v8::String::NewFromUtf8Literal(isolate, errmsg)));
         }
-        promise.RejectWithErrorMessage(error_message);
+        promise.RejectWithErrorMessage(errmsg);
         return handle;
       }
 
@@ -726,7 +736,7 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
                                              std::move(completion_callback));
 
     render_frame->GetWebFrame()->RequestExecuteScript(
-        world_id, base::make_span(sources),
+        world_id, base::span(sources),
         has_user_gesture ? blink::mojom::UserActivationOption::kActivate
                          : blink::mojom::UserActivationOption::kDoNotActivate,
         script_execution_type, load_blocking_option, base::NullCallback(),
@@ -793,7 +803,6 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
 #endif
 
   void ClearCache(v8::Isolate* isolate) {
-    isolate->IdleNotificationDeadline(0.5);
     blink::WebCache::Clear();
     base::MemoryPressureListener::NotifyMemoryPressure(
         base::MemoryPressureListener::MEMORY_PRESSURE_LEVEL_CRITICAL);
@@ -890,6 +899,7 @@ class WebFrameRenderer : public gin::Wrappable<WebFrameRenderer>,
     return render_frame->GetRoutingID();
   }
 };
+}  // namespace
 
 gin::WrapperInfo WebFrameRenderer::kWrapperInfo = {gin::kEmbedderNativeGin};
 

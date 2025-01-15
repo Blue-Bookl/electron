@@ -4,9 +4,11 @@
 
 #include "shell/browser/electron_navigation_throttle.h"
 
+#include "content/browser/renderer_host/render_frame_host_impl.h"  // nogncheck
 #include "content/public/browser/navigation_handle.h"
 #include "shell/browser/api/electron_api_web_contents.h"
 #include "shell/browser/javascript_environment.h"
+#include "ui/base/page_transition_types.h"
 
 namespace electron {
 
@@ -26,7 +28,6 @@ ElectronNavigationThrottle::WillStartRequest() {
   auto* contents = handle->GetWebContents();
   if (!contents) {
     NOTREACHED();
-    return PROCEED;
   }
 
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
@@ -37,11 +38,24 @@ ElectronNavigationThrottle::WillStartRequest() {
     return PROCEED;
   }
 
-  if (handle->IsRendererInitiated() &&
+  bool is_renderer_initiated = handle->IsRendererInitiated();
+
+  // Chrome's internal pages always mark navigation as browser-initiated. Let's
+  // ignore that.
+  // https://source.chromium.org/chromium/chromium/src/+/main:content/browser/renderer_host/navigator.cc;l=883-892;drc=0c8ffbe78dc0ef2047849e45cefb3f621043e956
+  if (!is_renderer_initiated &&
+      ui::PageTransitionIsWebTriggerable(handle->GetPageTransition())) {
+    auto* render_frame_host = contents->GetPrimaryMainFrame();
+    auto* rfh_impl =
+        static_cast<content::RenderFrameHostImpl*>(render_frame_host);
+    is_renderer_initiated = rfh_impl && rfh_impl->web_ui();
+  }
+
+  if (is_renderer_initiated &&
       api_contents->EmitNavigationEvent("will-frame-navigate", handle)) {
     return CANCEL;
   }
-  if (handle->IsRendererInitiated() && handle->IsInMainFrame() &&
+  if (is_renderer_initiated && handle->IsInMainFrame() &&
       api_contents->EmitNavigationEvent("will-navigate", handle)) {
     return CANCEL;
   }
@@ -54,7 +68,6 @@ ElectronNavigationThrottle::WillRedirectRequest() {
   auto* contents = handle->GetWebContents();
   if (!contents) {
     NOTREACHED();
-    return PROCEED;
   }
 
   v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();

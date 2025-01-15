@@ -7,10 +7,13 @@
 
 #include <windows.h>
 
-#include "shell/browser/native_window_views.h"
+#include <optional>
+
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
 
 namespace electron {
+
+class NativeWindowViews;
 
 class ElectronDesktopWindowTreeHostWin : public views::DesktopWindowTreeHostWin,
                                          public ::ui::NativeThemeObserver {
@@ -27,10 +30,12 @@ class ElectronDesktopWindowTreeHostWin : public views::DesktopWindowTreeHostWin,
       const ElectronDesktopWindowTreeHostWin&) = delete;
 
  protected:
+  // views::DesktopWindowTreeHostWin:
   bool PreHandleMSG(UINT message,
                     WPARAM w_param,
                     LPARAM l_param,
                     LRESULT* result) override;
+  bool ShouldPaintAsActive() const override;
   bool GetDwmFrameInsetsInPixels(gfx::Insets* insets) const override;
   bool GetClientAreaInsets(gfx::Insets* insets,
                            HMONITOR monitor) const override;
@@ -38,9 +43,11 @@ class ElectronDesktopWindowTreeHostWin : public views::DesktopWindowTreeHostWin,
 
   // ui::NativeThemeObserver:
   void OnNativeThemeUpdated(ui::NativeTheme* observed_theme) override;
+  bool ShouldWindowContentsBeTransparent() const override;
 
  private:
   raw_ptr<NativeWindowViews> native_window_view_;  // weak ref
+  std::optional<bool> force_should_paint_as_active_;
 };
 
 }  // namespace electron

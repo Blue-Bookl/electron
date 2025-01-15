@@ -10,7 +10,7 @@
 #include "gin/wrappable.h"
 #include "mojo/public/cpp/bindings/connector.h"
 #include "mojo/public/cpp/bindings/message.h"
-#include "shell/browser/event_emitter_mixin.h"
+#include "third_party/blink/public/common/messaging/message_port_descriptor.h"
 
 namespace v8 {
 template <class T>
@@ -30,8 +30,8 @@ namespace electron {
 // There is only a single instance of this class
 // for the lifetime of a Utility Process which
 // also means that GC lifecycle is ignored by this class.
-class ParentPort : public gin::Wrappable<ParentPort>,
-                   public mojo::MessageReceiver {
+class ParentPort final : public gin::Wrappable<ParentPort>,
+                         public mojo::MessageReceiver {
  public:
   static ParentPort* GetInstance();
   static gin::Handle<ParentPort> Create(v8::Isolate* isolate);

@@ -1,15 +1,16 @@
+const chalk = require('chalk');
 const { GitProcess } = require('dugite');
-const fs = require('fs');
-const klaw = require('klaw');
-const os = require('os');
-const path = require('path');
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 
 const ELECTRON_DIR = path.resolve(__dirname, '..', '..');
 const SRC_DIR = path.resolve(ELECTRON_DIR, '..');
 
-require('colors');
-const pass = '✓'.green;
-const fail = '✗'.red;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const pass = chalk.green('✓');
+const fail = chalk.red('✗');
 
 function getElectronExec () {
   const OUT_DIR = getOutDir();
@@ -129,18 +130,13 @@ function chunkFilenames (filenames, offset = 0) {
  * @returns {Promise<string[]>}
 */
 async function findMatchingFiles (top, test) {
-  return new Promise((resolve, reject) => {
-    const matches = [];
-    klaw(top, {
-      filter: f => path.basename(f) !== '.bin'
-    })
-      .on('end', () => resolve(matches))
-      .on('data', item => {
-        if (test(item.path)) {
-          matches.push(item.path);
-        }
-      });
-  });
+  return fs.promises.readdir(top, { encoding: 'utf8', recursive: true })
+    .then(files => {
+      return files
+        .filter(name => path.basename(name) !== '.bin')
+        .filter(name => test(name))
+        .map(name => path.join(top, name));
+    });
 }
 
 module.exports = {

@@ -1,13 +1,16 @@
-import { expect } from 'chai';
-import * as path from 'path';
-import * as fs from 'fs';
 import { BrowserWindow } from 'electron/main';
+
+import { expect } from 'chai';
+
+import * as childProcess from 'node:child_process';
+import { once } from 'node:events';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+
 import { ifdescribe, ifit } from './lib/spec-helpers';
 import { closeAllWindows } from './lib/window-helpers';
-import * as childProcess from 'child_process';
-import { once } from 'events';
 
-const Module = require('module');
+const Module = require('node:module') as NodeJS.ModuleInternal;
 
 const nativeModulesEnabled = !process.env.ELECTRON_SKIP_NATIVE_MODULE_TESTS;
 
@@ -68,7 +71,7 @@ describe('modules support', () => {
 
     describe('q', () => {
       describe('Q.when', () => {
-        it('emits the fullfil callback', (done) => {
+        it('emits the fulfil callback', (done) => {
           const Q = require('q');
           Q(true).then((val: boolean) => {
             expect(val).to.be.true();

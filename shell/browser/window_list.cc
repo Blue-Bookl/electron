@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "base/logging.h"
+#include "base/no_destructor.h"
 #include "shell/browser/native_window.h"
 #include "shell/browser/window_list_observer.h"
 
@@ -23,10 +23,6 @@ std::vector<base::WeakPtr<T>> ConvertToWeakPtrVector(std::vector<T*> raw_ptrs) {
 }  // namespace
 
 namespace electron {
-
-// static
-base::LazyInstance<base::ObserverList<WindowListObserver>>::Leaky
-    WindowList::observers_ = LAZY_INSTANCE_INITIALIZER;
 
 // static
 WindowList* WindowList::instance_ = nullptr;
@@ -54,40 +50,33 @@ void WindowList::AddWindow(NativeWindow* window) {
   // Push |window| on the appropriate list instance.
   WindowVector& windows = GetInstance()->windows_;
   windows.push_back(window);
-
-  for (WindowListObserver& observer : observers_.Get())
-    observer.OnWindowAdded(window);
 }
 
 // static
 void WindowList::RemoveWindow(NativeWindow* window) {
   WindowVector& windows = GetInstance()->windows_;
-  windows.erase(std::remove(windows.begin(), windows.end(), window),
-                windows.end());
-
-  for (WindowListObserver& observer : observers_.Get())
-    observer.OnWindowRemoved(window);
+  std::erase(windows, window);
 
   if (windows.empty()) {
-    for (WindowListObserver& observer : observers_.Get())
+    for (WindowListObserver& observer : GetObservers())
       observer.OnWindowAllClosed();
   }
 }
 
 // static
 void WindowList::WindowCloseCancelled(NativeWindow* window) {
-  for (WindowListObserver& observer : observers_.Get())
+  for (WindowListObserver& observer : GetObservers())
     observer.OnWindowCloseCancelled(window);
 }
 
 // static
 void WindowList::AddObserver(WindowListObserver* observer) {
-  observers_.Get().AddObserver(observer);
+  GetObservers().AddObserver(observer);
 }
 
 // static
 void WindowList::RemoveObserver(WindowListObserver* observer) {
-  observers_.Get().RemoveObserver(observer);
+  GetObservers().RemoveObserver(observer);
 }
 
 // static
@@ -95,7 +84,7 @@ void WindowList::CloseAllWindows() {
   std::vector<base::WeakPtr<NativeWindow>> weak_windows =
       ConvertToWeakPtrVector(GetInstance()->windows_);
 #if BUILDFLAG(IS_MAC)
-  std::reverse(weak_windows.begin(), weak_windows.end());
+  std::ranges::reverse(weak_windows);
 #endif
   for (const auto& window : weak_windows) {
     if (window && !window->IsClosed())
@@ -117,5 +106,11 @@ void WindowList::DestroyAllWindows() {
 WindowList::WindowList() = default;
 
 WindowList::~WindowList() = default;
+
+// static
+base::ObserverList<WindowListObserver>& WindowList::GetObservers() {
+  static base::NoDestructor<base::ObserverList<WindowListObserver>> instance;
+  return *instance;
+}
 
 }  // namespace electron

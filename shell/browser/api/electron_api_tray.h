@@ -6,49 +6,57 @@
 #define ELECTRON_SHELL_BROWSER_API_ELECTRON_API_TRAY_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
-#include "gin/handle.h"
 #include "gin/wrappable.h"
 #include "shell/browser/event_emitter_mixin.h"
-#include "shell/browser/javascript_environment.h"
 #include "shell/browser/ui/tray_icon.h"
 #include "shell/browser/ui/tray_icon_observer.h"
 #include "shell/common/gin_converters/guid_converter.h"
 #include "shell/common/gin_helper/cleaned_up_at_exit.h"
 #include "shell/common/gin_helper/constructible.h"
-#include "shell/common/gin_helper/error_thrower.h"
 #include "shell/common/gin_helper/pinnable.h"
 
 namespace gfx {
 class Image;
-}
+class Image;
+}  // namespace gfx
+
+namespace gin {
+template <typename T>
+class Handle;
+}  // namespace gin
 
 namespace gin_helper {
 class Dictionary;
-}
+class ErrorThrower;
+}  // namespace gin_helper
 
 namespace electron::api {
 
 class Menu;
 
-class Tray : public gin::Wrappable<Tray>,
-             public gin_helper::EventEmitterMixin<Tray>,
-             public gin_helper::Constructible<Tray>,
-             public gin_helper::CleanedUpAtExit,
-             public gin_helper::Pinnable<Tray>,
-             public TrayIconObserver {
+class Tray final : public gin::Wrappable<Tray>,
+                   public gin_helper::EventEmitterMixin<Tray>,
+                   public gin_helper::Constructible<Tray>,
+                   public gin_helper::CleanedUpAtExit,
+                   public gin_helper::Pinnable<Tray>,
+                   private TrayIconObserver {
  public:
   // gin_helper::Constructible
   static gin::Handle<Tray> New(gin_helper::ErrorThrower thrower,
                                v8::Local<v8::Value> image,
-                               absl::optional<UUID> guid,
+                               std::optional<UUID> guid,
                                gin::Arguments* args);
+
   static void FillObjectTemplate(v8::Isolate*, v8::Local<v8::ObjectTemplate>);
+  static const char* GetClassName() { return "Tray"; }
 
   // gin::Wrappable
   static gin::WrapperInfo kWrapperInfo;
+  const char* GetTypeName() override;
 
   // disable copy
   Tray(const Tray&) = delete;
@@ -57,7 +65,7 @@ class Tray : public gin::Wrappable<Tray>,
  private:
   Tray(v8::Isolate* isolate,
        v8::Local<v8::Value> image,
-       absl::optional<UUID> guid);
+       std::optional<UUID> guid);
   ~Tray() override;
 
   // TrayIconObserver:
@@ -66,6 +74,7 @@ class Tray : public gin::Wrappable<Tray>,
                  int modifiers) override;
   void OnDoubleClicked(const gfx::Rect& bounds, int modifiers) override;
   void OnRightClicked(const gfx::Rect& bounds, int modifiers) override;
+  void OnMiddleClicked(const gfx::Rect& bounds, int modifiers) override;
   void OnBalloonShow() override;
   void OnBalloonClicked() override;
   void OnBalloonClosed() override;
@@ -88,7 +97,7 @@ class Tray : public gin::Wrappable<Tray>,
   void SetPressedImage(v8::Isolate* isolate, v8::Local<v8::Value> image);
   void SetToolTip(const std::string& tool_tip);
   void SetTitle(const std::string& title,
-                const absl::optional<gin_helper::Dictionary>& options,
+                const std::optional<gin_helper::Dictionary>& options,
                 gin::Arguments* args);
   std::string GetTitle();
   void SetIgnoreDoubleClickEvents(bool ignore);

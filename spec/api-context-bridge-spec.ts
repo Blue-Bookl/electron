@@ -1,15 +1,17 @@
 import { BrowserWindow, ipcMain } from 'electron/main';
 import { contextBridge } from 'electron/renderer';
-import { expect } from 'chai';
-import * as fs from 'fs-extra';
-import * as http from 'http';
-import * as os from 'os';
-import * as path from 'path';
-import * as cp from 'child_process';
 
-import { closeWindow } from './lib/window-helpers';
+import { expect } from 'chai';
+
+import * as cp from 'node:child_process';
+import { once } from 'node:events';
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
 import { listen } from './lib/spec-helpers';
-import { once } from 'events';
+import { closeWindow } from './lib/window-helpers';
 
 const fixturesPath = path.resolve(__dirname, 'fixtures', 'api', 'context-bridge');
 
@@ -34,7 +36,7 @@ describe('contextBridge', () => {
 
   afterEach(async () => {
     await closeWindow(w);
-    if (dir) await fs.remove(dir);
+    if (dir) await fs.promises.rm(dir, { force: true, recursive: true });
   });
 
   it('should not be accessible when contextIsolation is disabled', async () => {
@@ -67,16 +69,20 @@ describe('contextBridge', () => {
     describe(`with sandbox=${useSandbox}`, () => {
       const makeBindingWindow = async (bindingCreator: Function, worldId: number = 0) => {
         const preloadContentForMainWorld = `const renderer_1 = require('electron');
-        ${useSandbox ? '' : `require('v8').setFlagsFromString('--expose_gc');
-        const gc=require('vm').runInNewContext('gc');
+        ${useSandbox
+? ''
+: `require('node:v8').setFlagsFromString('--expose_gc');
+        const gc=require('node:vm').runInNewContext('gc');
         renderer_1.contextBridge.exposeInMainWorld('GCRunner', {
           run: () => gc()
         });`}
         (${bindingCreator.toString()})();`;
 
         const preloadContentForIsolatedWorld = `const renderer_1 = require('electron');
-        ${useSandbox ? '' : `require('v8').setFlagsFromString('--expose_gc');
-        const gc=require('vm').runInNewContext('gc');
+        ${useSandbox
+? ''
+: `require('node:v8').setFlagsFromString('--expose_gc');
+        const gc=require('node:vm').runInNewContext('gc');
         renderer_1.webFrame.setIsolatedWorldInfo(${worldId}, {
           name: "Isolated World"
         });
@@ -85,9 +91,9 @@ describe('contextBridge', () => {
         });`}
         (${bindingCreator.toString()})();`;
 
-        const tmpDir = await fs.mkdtemp(path.resolve(os.tmpdir(), 'electron-spec-preload-'));
+        const tmpDir = await fs.promises.mkdtemp(path.resolve(os.tmpdir(), 'electron-spec-preload-'));
         dir = tmpDir;
-        await fs.writeFile(path.resolve(tmpDir, 'preload.js'), worldId === 0 ? preloadContentForMainWorld : preloadContentForIsolatedWorld);
+        await fs.promises.writeFile(path.resolve(tmpDir, 'preload.js'), worldId === 0 ? preloadContentForMainWorld : preloadContentForIsolatedWorld);
         w = new BrowserWindow({
           show: false,
           webPreferences: {
@@ -1006,10 +1012,10 @@ describe('contextBridge', () => {
             }
           };
           const keys: string[] = [];
-          Object.entries(toExpose).forEach(([key, value]) => {
+          for (const [key, value] of Object.entries(toExpose)) {
             keys.push(key);
             contextBridge.exposeInMainWorld(key, value);
-          });
+          }
           contextBridge.exposeInMainWorld('keys', keys);
         });
         const result = await callWithBindings(async (root: any) => {

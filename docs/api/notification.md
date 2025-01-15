@@ -36,7 +36,7 @@ Returns `boolean` - Whether or not desktop notifications are supported on the cu
   * `subtitle` string (optional) _macOS_ - A subtitle for the notification, which will be displayed below the title.
   * `body` string (optional) - The body text of the notification, which will be displayed below the title or subtitle.
   * `silent` boolean (optional) - Whether or not to suppress the OS notification noise when showing the notification.
-  * `icon` (string | [NativeImage](native-image.md)) (optional) - An icon to use in the notification.
+  * `icon` (string | [NativeImage](native-image.md)) (optional) - An icon to use in the notification. If a string is passed, it must be a valid path to a local icon file.
   * `hasReply` boolean (optional) _macOS_ - Whether or not to add an inline reply option to the notification.
   * `timeoutType` string (optional) _Linux_ _Windows_ - The timeout duration of the notification. Can be 'default' or 'never'.
   * `replyPlaceholder` string (optional) _macOS_ - The placeholder to write in the inline reply input field.
@@ -85,6 +85,8 @@ Emitted when the notification is closed by manual intervention from the user.
 This event is not guaranteed to be emitted in all cases where the notification
 is closed.
 
+On Windows, the `close` event can be emitted in one of three ways: programmatic dismissal with `notification.close()`, by the user closing the notification, or via system timeout. If a notification is in the Action Center after the initial `close` event is emitted, a call to `notification.close()` will remove the notification from the action center but the `close` event will not be emitted again.
+
 #### Event: 'reply' _macOS_
 
 Returns:
@@ -126,6 +128,8 @@ shown notification and create a new one with identical properties.
 #### `notification.close()`
 
 Dismisses the notification.
+
+On Windows, calling `notification.close()` while the notification is visible on screen will dismiss the notification and remove it from the Action Center. If `notification.close()` is called after the notification is no longer visible on screen, calling `notification.close()` will try remove it from the Action Center.
 
 ### Instance Properties
 

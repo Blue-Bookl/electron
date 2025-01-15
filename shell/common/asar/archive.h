@@ -6,15 +6,17 @@
 #define ELECTRON_SHELL_COMMON_ASAR_ARCHIVE_H_
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include <uv.h>
 
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/synchronization/lock.h"
 #include "base/values.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
 
 namespace asar {
 
@@ -29,9 +31,9 @@ struct IntegrityPayload {
   IntegrityPayload();
   ~IntegrityPayload();
   IntegrityPayload(const IntegrityPayload& other);
-  HashAlgorithm algorithm;
+  HashAlgorithm algorithm = HashAlgorithm::kNone;
   std::string hash;
-  uint32_t block_size;
+  uint32_t block_size = 0U;
   std::vector<std::string> blocks;
 };
 
@@ -42,18 +44,21 @@ class Archive {
   struct FileInfo {
     FileInfo();
     ~FileInfo();
-    bool unpacked;
-    bool executable;
-    uint32_t size;
-    uint64_t offset;
-    absl::optional<IntegrityPayload> integrity;
+    bool unpacked = false;
+    bool executable = false;
+    uint32_t size = 0U;
+    uint64_t offset = 0U;
+    std::optional<IntegrityPayload> integrity;
+  };
+
+  enum class FileType {
+    kFile = UV_DIRENT_FILE,
+    kDirectory = UV_DIRENT_DIR,
+    kLink = UV_DIRENT_LINK,
   };
 
   struct Stats : public FileInfo {
-    Stats() : is_file(true), is_directory(false), is_link(false) {}
-    bool is_file;
-    bool is_directory;
-    bool is_link;
+    FileType type = FileType::kFile;
   };
 
   explicit Archive(const base::FilePath& path);
@@ -66,8 +71,8 @@ class Archive {
   // Read and parse the header.
   bool Init();
 
-  absl::optional<IntegrityPayload> HeaderIntegrity() const;
-  absl::optional<base::FilePath> RelativePath() const;
+  std::optional<IntegrityPayload> HeaderIntegrity() const;
+  std::optional<base::FilePath> RelativePath() const;
 
   // Get the info of a file.
   bool GetFileInfo(const base::FilePath& path, FileInfo* info) const;
@@ -95,13 +100,13 @@ class Archive {
   base::FilePath path() const { return path_; }
 
  private:
-  bool initialized_;
+  bool initialized_ = false;
   bool header_validated_ = false;
   const base::FilePath path_;
-  base::File file_;
+  base::File file_{base::File::FILE_OK};
   int fd_ = -1;
   uint32_t header_size_ = 0;
-  absl::optional<base::Value::Dict> header_;
+  std::optional<base::Value::Dict> header_;
 
   // Cached external temporary files.
   base::Lock external_files_lock_;

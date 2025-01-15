@@ -26,6 +26,7 @@
   in_app_purchase::InAppPurchaseCallback callback_;
   NSInteger quantity_;
   NSString* username_;
+  InAppPurchase __strong* self_;
 }
 
 - (id)initWithCallback:(in_app_purchase::InAppPurchaseCallback)callback
@@ -53,6 +54,7 @@
     callback_ = std::move(callback);
     quantity_ = quantity;
     username_ = [username copy];
+    self_ = self;
   }
 
   return self;
@@ -77,16 +79,13 @@
 }
 
 /**
- * Process product informations and start the payment.
+ * Process product information and start the payment.
  *
  * @param request - The product request.
- * @param response - The informations about the list of products.
+ * @param response - The information about the list of products.
  */
 - (void)productsRequest:(SKProductsRequest*)request
      didReceiveResponse:(SKProductsResponse*)response {
-  // Release request object.
-  [request release];
-
   // Get the first product.
   NSArray* products = response.products;
   SKProduct* product = [products count] == 1 ? [products firstObject] : nil;
@@ -94,6 +93,7 @@
   // Return if the product is not found or invalid.
   if (product == nil) {
     [self runCallback:false];
+    self_ = nil;
     return;
   }
 
@@ -117,6 +117,7 @@
 
   // Notify that the payment has been added to the queue with success.
   [self runCallback:true];
+  self_ = nil;
 }
 
 /**
@@ -129,13 +130,6 @@
     content::GetUIThreadTaskRunner({})->PostTask(
         FROM_HERE, base::BindOnce(std::move(callback_), isProductValid));
   }
-  // Release this delegate.
-  [self release];
-}
-
-- (void)dealloc {
-  [username_ release];
-  [super dealloc];
 }
 
 @end

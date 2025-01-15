@@ -1,17 +1,31 @@
-import { BrowserWindow, app } from 'electron/main';
 import { shell } from 'electron/common';
-import { closeAllWindows } from './lib/window-helpers';
-import { ifdescribe, ifit, listen } from './lib/spec-helpers';
-import * as http from 'http';
-import * as fs from 'fs-extra';
-import * as os from 'os';
-import * as path from 'path';
+import { BrowserWindow, app } from 'electron/main';
+
 import { expect } from 'chai';
-import { once } from 'events';
+
+import { execSync } from 'node:child_process';
+import { once } from 'node:events';
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
+
+import { ifdescribe, ifit, listen } from './lib/spec-helpers';
+import { closeAllWindows } from './lib/window-helpers';
 
 describe('shell module', () => {
   describe('shell.openExternal()', () => {
     let envVars: Record<string, string | undefined> = {};
+    let server: http.Server;
+
+    after(function () {
+      this.timeout(60000);
+      if (process.env.CI && process.platform === 'win32') {
+        // Edge may cause issues with visibility tests, so make sure it is closed after testing.
+        const killEdge = 'Get-Process | Where Name -Like "msedge" | Stop-Process';
+        execSync(killEdge, { shell: 'powershell.exe' });
+      }
+    });
 
     beforeEach(function () {
       envVars = {
@@ -28,10 +42,14 @@ describe('shell module', () => {
         process.env.BROWSER = envVars.browser;
         process.env.DISPLAY = envVars.display;
       }
+      await closeAllWindows();
+      if (server) {
+        server.close();
+        server = null as unknown as http.Server;
+      }
     });
-    afterEach(closeAllWindows);
 
-    it('opens an external link', async () => {
+    async function urlOpened () {
       let url = 'http://127.0.0.1';
       let requestReceived: Promise<any>;
       if (process.platform === 'linux') {
@@ -47,17 +65,46 @@ describe('shell module', () => {
         const w = new BrowserWindow({ show: true });
         requestReceived = once(w, 'blur');
       } else {
-        const server = http.createServer((req, res) => {
+        server = http.createServer((req, res) => {
           res.end();
         });
         url = (await listen(server)).url;
         requestReceived = new Promise<void>(resolve => server.on('connection', () => resolve()));
       }
+      return { url, requestReceived };
+    }
 
+    it('opens an external link', async () => {
+      const { url, requestReceived } = await urlOpened();
       await Promise.all<void>([
         shell.openExternal(url),
         requestReceived
       ]);
+    });
+
+    it('opens an external link in the renderer', async () => {
+      const { url, requestReceived } = await urlOpened();
+      const w = new BrowserWindow({ show: false, webPreferences: { sandbox: false, contextIsolation: false, nodeIntegration: true } });
+      await w.loadURL('about:blank');
+      await Promise.all<void>([
+        w.webContents.executeJavaScript(`require("electron").shell.openExternal(${JSON.stringify(url)})`),
+        requestReceived
+      ]);
+    });
+
+    ifit(process.platform === 'darwin')('removes focus from the electron window after opening an external link', async () => {
+      const url = 'http://127.0.0.1';
+      const w = new BrowserWindow({ show: true });
+
+      await once(w, 'focus');
+      expect(w.isFocused()).to.be.true();
+
+      await Promise.all<void>([
+        shell.openExternal(url),
+        once(w, 'blur') as Promise<any>
+      ]);
+
+      expect(w.isFocused()).to.be.false();
     });
   });
 
@@ -65,9 +112,9 @@ describe('shell module', () => {
     afterEach(closeAllWindows);
 
     it('moves an item to the trash', async () => {
-      const dir = await fs.mkdtemp(path.resolve(app.getPath('temp'), 'electron-shell-spec-'));
+      const dir = await fs.promises.mkdtemp(path.resolve(app.getPath('temp'), 'electron-shell-spec-'));
       const filename = path.join(dir, 'temp-to-be-deleted');
-      await fs.writeFile(filename, 'dummy-contents');
+      await fs.promises.writeFile(filename, 'dummy-contents');
       await shell.trashItem(filename);
       expect(fs.existsSync(filename)).to.be.false();
     });

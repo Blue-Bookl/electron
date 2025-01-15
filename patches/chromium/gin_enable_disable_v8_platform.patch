@@ -7,10 +7,10 @@ We don't use gin to create the V8 platform, because we need to inject Node
 things.
 
 diff --git a/gin/isolate_holder.cc b/gin/isolate_holder.cc
-index e8608bb868c82c9af5426cd6f8512ce6b18ff39f..6268851494a0bbc0b3e693782dae6171f6347657 100644
+index f545367721e4a96c4c72828b96c3a2360f9fd6a7..38cedeac0ab48d0cc4f7b331c6ecfbbf1d4d00ed 100644
 --- a/gin/isolate_holder.cc
 +++ b/gin/isolate_holder.cc
-@@ -136,9 +136,10 @@ void IsolateHolder::Initialize(ScriptMode mode,
+@@ -154,9 +154,10 @@ void IsolateHolder::Initialize(ScriptMode mode,
                                 const intptr_t* reference_table,
                                 const std::string js_command_line_flags,
                                 v8::FatalErrorCallback fatal_error_callback,
@@ -24,10 +24,10 @@ index e8608bb868c82c9af5426cd6f8512ce6b18ff39f..6268851494a0bbc0b3e693782dae6171
    g_reference_table = reference_table;
    g_fatal_error_callback = fatal_error_callback;
 diff --git a/gin/public/isolate_holder.h b/gin/public/isolate_holder.h
-index 10caab6d9ef3345332c163a55dcef991248ab4ea..c9bc6e5dd7e1cf8d198afcd21cbb24970337a50f 100644
+index 7053a5619c6ff6bced75572d7a3336f532b8bb81..89bbc161b99846c1f9e9585e98dd90568187f902 100644
 --- a/gin/public/isolate_holder.h
 +++ b/gin/public/isolate_holder.h
-@@ -109,7 +109,8 @@ class GIN_EXPORT IsolateHolder {
+@@ -117,7 +117,8 @@ class GIN_EXPORT IsolateHolder {
                           const intptr_t* reference_table = nullptr,
                           const std::string js_command_line_flags = {},
                           v8::FatalErrorCallback fatal_error_callback = nullptr,
@@ -38,20 +38,20 @@ index 10caab6d9ef3345332c163a55dcef991248ab4ea..c9bc6e5dd7e1cf8d198afcd21cbb2497
    // Returns whether `Initialize` has already been invoked in the process.
    // Initialization is a one-way operation (i.e., this method cannot return
 diff --git a/gin/v8_initializer.cc b/gin/v8_initializer.cc
-index ba3ab6adff0db46c8a1fca2e1bf3b3cb4a41fbdd..0d56182a284b91e7bf5749dbf0796cbe705d2c1f 100644
+index 39c71434bbb82d20e53acd041d289a845bf2ac3e..587dcfb97712aa6422ac01625a81e6c59c84ac2f 100644
 --- a/gin/v8_initializer.cc
 +++ b/gin/v8_initializer.cc
-@@ -402,7 +402,8 @@ void SetFlags(IsolateHolder::ScriptMode mode,
+@@ -541,7 +541,8 @@ void SetFlags(IsolateHolder::ScriptMode mode,
  // static
  void V8Initializer::Initialize(IsolateHolder::ScriptMode mode,
-                                const std::string js_command_line_flags,
+                                const std::string& js_command_line_flags,
 -                               v8::OOMErrorCallback oom_error_callback) {
 +                               v8::OOMErrorCallback oom_error_callback,
 +                               bool create_v8_platform) {
    static bool v8_is_initialized = false;
    if (v8_is_initialized)
      return;
-@@ -412,7 +413,8 @@ void V8Initializer::Initialize(IsolateHolder::ScriptMode mode,
+@@ -551,7 +552,8 @@ void V8Initializer::Initialize(IsolateHolder::ScriptMode mode,
    // See https://crbug.com/v8/11043
    SetFlags(mode, js_command_line_flags);
  
@@ -62,13 +62,13 @@ index ba3ab6adff0db46c8a1fca2e1bf3b3cb4a41fbdd..0d56182a284b91e7bf5749dbf0796cbe
    // Set this as early as possible in order to ensure OOM errors are reported
    // correctly.
 diff --git a/gin/v8_initializer.h b/gin/v8_initializer.h
-index d499cb43c4e12ca32912fce7078fcadff7509a87..dd9899c3e0dbadfc0074ffce87d51193e1c963cb 100644
+index 74e25c98d723e35c53f38548fa9b5ade363eeb46..cd7b010978f3f595263761e0692945667b9b3f89 100644
 --- a/gin/v8_initializer.h
 +++ b/gin/v8_initializer.h
 @@ -31,7 +31,8 @@ class GIN_EXPORT V8Initializer {
    // This should be called by IsolateHolder::Initialize().
    static void Initialize(IsolateHolder::ScriptMode mode,
-                          const std::string js_command_line_flags = {},
+                          const std::string& js_command_line_flags = {},
 -                         v8::OOMErrorCallback oom_error_callback = nullptr);
 +                         v8::OOMErrorCallback oom_error_callback = nullptr,
 +                         bool create_v8_platform = true);

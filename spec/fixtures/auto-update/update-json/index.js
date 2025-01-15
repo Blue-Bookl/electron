@@ -1,12 +1,12 @@
-const fs = require('fs');
-const path = require('path');
+const { app, autoUpdater } = require('electron');
+
+const fs = require('node:fs');
+const path = require('node:path');
 
 process.on('uncaughtException', (err) => {
   console.error(err);
   process.exit(1);
 });
-
-const { app, autoUpdater } = require('electron');
 
 autoUpdater.on('error', (err) => {
   console.error(err);

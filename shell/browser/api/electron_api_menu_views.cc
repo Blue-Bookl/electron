@@ -7,6 +7,7 @@
 #include <memory>
 #include <utility>
 
+#include "shell/browser/api/electron_api_base_window.h"
 #include "shell/browser/native_window_views.h"
 #include "ui/display/screen.h"
 
@@ -22,6 +23,7 @@ void MenuViews::PopupAt(BaseWindow* window,
                         int x,
                         int y,
                         int positioning_item,
+                        ui::mojom::MenuSourceType source_type,
                         base::OnceClosure callback) {
   auto* native_window = static_cast<NativeWindowViews*>(window->window());
   if (!native_window)
@@ -51,24 +53,26 @@ void MenuViews::PopupAt(BaseWindow* window,
   auto close_callback = base::AdaptCallbackForRepeating(
       base::BindOnce(&MenuViews::OnClosed, weak_factory_.GetWeakPtr(),
                      window_id, std::move(callback_with_ref)));
-  menu_runners_[window_id] =
+  auto& runner = menu_runners_[window_id] =
       std::make_unique<MenuRunner>(model(), flags, std::move(close_callback));
-  menu_runners_[window_id]->RunMenuAt(
-      native_window->widget(), nullptr, gfx::Rect(location, gfx::Size()),
-      views::MenuAnchorPosition::kTopLeft, ui::MENU_SOURCE_MOUSE);
+  runner->RunMenuAt(native_window->widget(), nullptr,
+                    gfx::Rect{location, gfx::Size{}},
+                    views::MenuAnchorPosition::kTopLeft, source_type);
 }
 
 void MenuViews::ClosePopupAt(int32_t window_id) {
-  auto runner = menu_runners_.find(window_id);
-  if (runner != menu_runners_.end()) {
+  if (auto iter = menu_runners_.find(window_id); iter != menu_runners_.end()) {
     // Close the runner for the window.
-    runner->second->Cancel();
-  } else if (window_id == -1) {
-    // Or just close all opened runners.
-    for (auto it = menu_runners_.begin(); it != menu_runners_.end();) {
-      // The iterator is invalidated after the call.
-      (it++)->second->Cancel();
-    }
+    iter->second->Cancel();
+    return;
+  }
+
+  if (window_id == -1) {
+    // When -1 is passed in, close all opened runners.
+    // Note: `Cancel()` invalidaes iters, so move() to a temp before looping
+    auto tmp = std::move(menu_runners_);
+    for (auto& [id, runner] : tmp)
+      runner->Cancel();
   }
 }
 

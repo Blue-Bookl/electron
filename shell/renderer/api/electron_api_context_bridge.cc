@@ -7,17 +7,15 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
 #include "base/containers/contains.h"
 #include "base/feature_list.h"
-#include "base/no_destructor.h"
-#include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "shell/common/api/object_life_monitor.h"
 #include "shell/common/gin_converters/blink_converter.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
@@ -29,9 +27,9 @@
 #include "third_party/blink/public/web/web_local_frame.h"
 
 namespace features {
-
-const base::Feature kContextBridgeMutability{"ContextBridgeMutability",
-                                             base::FEATURE_DISABLED_BY_DEFAULT};
+BASE_FEATURE(kContextBridgeMutability,
+             "ContextBridgeMutability",
+             base::FEATURE_DISABLED_BY_DEFAULT);
 }
 
 namespace electron {
@@ -43,6 +41,8 @@ namespace api {
 namespace context_bridge {
 
 const char kProxyFunctionPrivateKey[] = "electron_contextBridge_proxy_fn";
+const char kProxyFunctionReceiverPrivateKey[] =
+    "electron_contextBridge_proxy_fn_receiver";
 const char kSupportsDynamicPropertiesPrivateKey[] =
     "electron_contextBridge_supportsDynamicProperties";
 const char kOriginalFunctionPrivateKey[] = "electron_contextBridge_original_fn";
@@ -137,6 +137,7 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
     v8::Local<v8::Context> source_context,
     v8::Local<v8::Context> destination_context,
     v8::Local<v8::Value> value,
+    v8::Local<v8::Value> parent_value,
     context_bridge::ObjectCache* object_cache,
     bool support_dynamic_properties,
     int recursion_depth,
@@ -151,7 +152,7 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
                         "Electron contextBridge recursion depth exceeded.  "
                         "Nested objects "
                         "deeper than 1000 are not supported.")));
-    return v8::MaybeLocal<v8::Value>();
+    return {};
   }
 
   // Certain primitives always use the current contexts prototype and we can
@@ -199,13 +200,16 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
       SetPrivate(destination_context, state,
                  context_bridge::kProxyFunctionPrivateKey, func);
       SetPrivate(destination_context, state,
+                 context_bridge::kProxyFunctionReceiverPrivateKey,
+                 parent_value);
+      SetPrivate(destination_context, state,
                  context_bridge::kSupportsDynamicPropertiesPrivateKey,
                  gin::ConvertToV8(destination_context->GetIsolate(),
                                   support_dynamic_properties));
 
       if (!v8::Function::New(destination_context, ProxyFunctionWrapper, state)
                .ToLocal(&proxy_func))
-        return v8::MaybeLocal<v8::Value>();
+        return {};
       SetPrivate(destination_context, proxy_func.As<v8::Object>(),
                  context_bridge::kOriginalFunctionPrivateKey, func);
       object_cache->CacheProxiedObject(value, proxy_func);
@@ -245,10 +249,12 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
           v8::MaybeLocal<v8::Value> val;
           {
             v8::TryCatch try_catch(isolate);
+            v8::Local<v8::Context> source_context =
+                global_source_context.Get(isolate);
             val = PassValueToOtherContext(
-                global_source_context.Get(isolate),
-                global_destination_context.Get(isolate), result, &object_cache,
-                false, 0, BridgeErrorTarget::kDestination);
+                source_context, global_destination_context.Get(isolate), result,
+                source_context->Global(), &object_cache, false, 0,
+                BridgeErrorTarget::kDestination);
             if (try_catch.HasCaught()) {
               if (try_catch.Message().IsEmpty()) {
                 proxied_promise->RejectWithErrorMessage(
@@ -291,10 +297,12 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
           v8::MaybeLocal<v8::Value> val;
           {
             v8::TryCatch try_catch(isolate);
+            v8::Local<v8::Context> source_context =
+                global_source_context.Get(isolate);
             val = PassValueToOtherContext(
-                global_source_context.Get(isolate),
-                global_destination_context.Get(isolate), result, &object_cache,
-                false, 0, BridgeErrorTarget::kDestination);
+                source_context, global_destination_context.Get(isolate), result,
+                source_context->Global(), &object_cache, false, 0,
+                BridgeErrorTarget::kDestination);
             if (try_catch.HasCaught()) {
               if (try_catch.Message().IsEmpty()) {
                 proxied_promise->RejectWithErrorMessage(
@@ -361,14 +369,14 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
     for (size_t i = 0; i < length; i++) {
       auto value_for_array = PassValueToOtherContext(
           source_context, destination_context,
-          arr->Get(source_context, i).ToLocalChecked(), object_cache,
+          arr->Get(source_context, i).ToLocalChecked(), value, object_cache,
           support_dynamic_properties, recursion_depth + 1, error_target);
       if (value_for_array.IsEmpty())
-        return v8::MaybeLocal<v8::Value>();
+        return {};
 
       if (!IsTrue(cloned_arr->Set(destination_context, static_cast<int>(i),
                                   value_for_array.ToLocalChecked()))) {
-        return v8::MaybeLocal<v8::Value>();
+        return {};
       }
     }
     object_cache->CacheProxiedObject(value, cloned_arr);
@@ -376,15 +384,17 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
   }
 
   // Custom logic to "clone" Element references
-  blink::WebElement elem = blink::WebElement::FromV8Value(value);
+  blink::WebElement elem =
+      blink::WebElement::FromV8Value(destination_context->GetIsolate(), value);
   if (!elem.IsNull()) {
     v8::Context::Scope destination_context_scope(destination_context);
-    return v8::MaybeLocal<v8::Value>(elem.ToV8Value(
-        destination_context->Global(), destination_context->GetIsolate()));
+    return v8::MaybeLocal<v8::Value>(
+        elem.ToV8Value(destination_context->GetIsolate()));
   }
 
   // Custom logic to "clone" Blob references
-  blink::WebBlob blob = blink::WebBlob::FromV8Value(value);
+  blink::WebBlob blob =
+      blink::WebBlob::FromV8Value(destination_context->GetIsolate(), value);
   if (!blob.IsNull()) {
     v8::Context::Scope destination_context_scope(destination_context);
     return v8::MaybeLocal<v8::Value>(
@@ -398,7 +408,7 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
         object_value, source_context, destination_context, object_cache,
         support_dynamic_properties, recursion_depth + 1, error_target);
     if (passed_value.IsEmpty())
-      return v8::MaybeLocal<v8::Value>();
+      return {};
     return v8::MaybeLocal<v8::Value>(passed_value.ToLocalChecked());
   }
 
@@ -411,7 +421,7 @@ v8::MaybeLocal<v8::Value> PassValueToOtherContext(
     v8::Context::Scope error_scope(error_context);
     // V8 serializer will throw an error if required
     if (!gin::ConvertFromV8(error_context->GetIsolate(), value, &ret)) {
-      return v8::MaybeLocal<v8::Value>();
+      return {};
     }
   }
 
@@ -439,8 +449,10 @@ void ProxyFunctionWrapper(const v8::FunctionCallbackInfo<v8::Value>& info) {
                  context_bridge::kSupportsDynamicPropertiesPrivateKey);
   v8::MaybeLocal<v8::Value> maybe_func = GetPrivate(
       calling_context, data, context_bridge::kProxyFunctionPrivateKey);
+  v8::MaybeLocal<v8::Value> maybe_recv = GetPrivate(
+      calling_context, data, context_bridge::kProxyFunctionReceiverPrivateKey);
   v8::Local<v8::Value> func_value;
-  if (sdp_value.IsEmpty() || maybe_func.IsEmpty() ||
+  if (sdp_value.IsEmpty() || maybe_func.IsEmpty() || maybe_recv.IsEmpty() ||
       !gin::ConvertFromV8(args.isolate(), sdp_value.ToLocalChecked(),
                           &support_dynamic_properties) ||
       !maybe_func.ToLocal(&func_value))
@@ -460,8 +472,9 @@ void ProxyFunctionWrapper(const v8::FunctionCallbackInfo<v8::Value>& info) {
 
     for (auto value : original_args) {
       auto arg = PassValueToOtherContext(
-          calling_context, func_owning_context, value, &object_cache,
-          support_dynamic_properties, 0, BridgeErrorTarget::kSource);
+          calling_context, func_owning_context, value,
+          calling_context->Global(), &object_cache, support_dynamic_properties,
+          0, BridgeErrorTarget::kSource);
       if (arg.IsEmpty())
         return;
       proxied_args.push_back(arg.ToLocalChecked());
@@ -472,8 +485,9 @@ void ProxyFunctionWrapper(const v8::FunctionCallbackInfo<v8::Value>& info) {
     v8::Local<v8::Value> error_message;
     {
       v8::TryCatch try_catch(args.isolate());
-      maybe_return_value = func->Call(func_owning_context, func,
-                                      proxied_args.size(), proxied_args.data());
+      maybe_return_value =
+          func->Call(func_owning_context, maybe_recv.ToLocalChecked(),
+                     proxied_args.size(), proxied_args.data());
       if (try_catch.HasCaught()) {
         did_error = true;
         v8::Local<v8::Value> exception = try_catch.Exception();
@@ -508,7 +522,7 @@ void ProxyFunctionWrapper(const v8::FunctionCallbackInfo<v8::Value>& info) {
     if (maybe_return_value.IsEmpty())
       return;
 
-    // In the case where we encounted an exception converting the return value
+    // In the case where we encountered an exception converting the return value
     // of the function we need to ensure that the exception / thrown value is
     // safely transferred from the function_owning_context (where it was thrown)
     // into the calling_context (where it needs to be thrown) To do this we pull
@@ -528,6 +542,7 @@ void ProxyFunctionWrapper(const v8::FunctionCallbackInfo<v8::Value>& info) {
       v8::TryCatch try_catch(args.isolate());
       ret = PassValueToOtherContext(func_owning_context, calling_context,
                                     maybe_return_value.ToLocalChecked(),
+                                    func_owning_context->Global(),
                                     &object_cache, support_dynamic_properties,
                                     0, BridgeErrorTarget::kDestination);
       if (try_catch.HasCaught()) {
@@ -570,8 +585,8 @@ v8::MaybeLocal<v8::Object> CreateProxyForAPI(
 
   {
     v8::Context::Scope destination_context_scope(destination_context);
-    gin_helper::Dictionary proxy =
-        gin::Dictionary::CreateEmpty(destination_context->GetIsolate());
+    auto proxy =
+        gin_helper::Dictionary::CreateEmpty(destination_context->GetIsolate());
     object_cache->CacheProxiedObject(api.GetHandle(), proxy.GetHandle());
     auto maybe_keys = api.GetHandle()->GetOwnPropertyNames(
         source_context, static_cast<v8::PropertyFilter>(v8::ONLY_ENUMERABLE));
@@ -604,18 +619,18 @@ v8::MaybeLocal<v8::Object> CreateProxyForAPI(
             v8::Local<v8::Value> getter_proxy;
             v8::Local<v8::Value> setter_proxy;
             if (!getter.IsEmpty()) {
-              if (!PassValueToOtherContext(source_context, destination_context,
-                                           getter, object_cache,
-                                           support_dynamic_properties, 1,
-                                           error_target)
+              if (!PassValueToOtherContext(
+                       source_context, destination_context, getter,
+                       api.GetHandle(), object_cache,
+                       support_dynamic_properties, 1, error_target)
                        .ToLocal(&getter_proxy))
                 continue;
             }
             if (!setter.IsEmpty()) {
-              if (!PassValueToOtherContext(source_context, destination_context,
-                                           setter, object_cache,
-                                           support_dynamic_properties, 1,
-                                           error_target)
+              if (!PassValueToOtherContext(
+                       source_context, destination_context, setter,
+                       api.GetHandle(), object_cache,
+                       support_dynamic_properties, 1, error_target)
                        .ToLocal(&setter_proxy))
                 continue;
             }
@@ -632,16 +647,19 @@ v8::MaybeLocal<v8::Object> CreateProxyForAPI(
         continue;
 
       auto passed_value = PassValueToOtherContext(
-          source_context, destination_context, value, object_cache,
-          support_dynamic_properties, recursion_depth + 1, error_target);
+          source_context, destination_context, value, api.GetHandle(),
+          object_cache, support_dynamic_properties, recursion_depth + 1,
+          error_target);
       if (passed_value.IsEmpty())
-        return v8::MaybeLocal<v8::Object>();
+        return {};
       proxy.Set(key, passed_value.ToLocalChecked());
     }
 
     return proxy.GetHandle();
   }
 }
+
+namespace {
 
 void ExposeAPIInWorld(v8::Isolate* isolate,
                       const int world_id,
@@ -680,7 +698,8 @@ void ExposeAPIInWorld(v8::Isolate* isolate,
     v8::Context::Scope target_context_scope(target_context);
 
     v8::MaybeLocal<v8::Value> maybe_proxy = PassValueToOtherContext(
-        electron_isolated_context, target_context, api, &object_cache, false, 0,
+        electron_isolated_context, target_context, api,
+        electron_isolated_context->Global(), &object_cache, false, 0,
         BridgeErrorTarget::kSource);
     if (maybe_proxy.IsEmpty())
       return;
@@ -729,9 +748,11 @@ void OverrideGlobalValueFromIsolatedWorld(
   {
     v8::Context::Scope main_context_scope(main_context);
     context_bridge::ObjectCache object_cache;
+    v8::Local<v8::Context> source_context = value->GetCreationContextChecked();
     v8::MaybeLocal<v8::Value> maybe_proxy = PassValueToOtherContext(
-        value->GetCreationContextChecked(), main_context, value, &object_cache,
-        support_dynamic_properties, 1, BridgeErrorTarget::kSource);
+        source_context, main_context, value, source_context->Global(),
+        &object_cache, support_dynamic_properties, 1,
+        BridgeErrorTarget::kSource);
     DCHECK(!maybe_proxy.IsEmpty());
     auto proxy = maybe_proxy.ToLocalChecked();
 
@@ -765,15 +786,19 @@ bool OverrideGlobalPropertyFromIsolatedWorld(
     v8::Local<v8::Value> getter_proxy;
     v8::Local<v8::Value> setter_proxy;
     if (!getter->IsNullOrUndefined()) {
+      v8::Local<v8::Context> source_context =
+          getter->GetCreationContextChecked();
       v8::MaybeLocal<v8::Value> maybe_getter_proxy = PassValueToOtherContext(
-          getter->GetCreationContextChecked(), main_context, getter,
+          source_context, main_context, getter, source_context->Global(),
           &object_cache, false, 1, BridgeErrorTarget::kSource);
       DCHECK(!maybe_getter_proxy.IsEmpty());
       getter_proxy = maybe_getter_proxy.ToLocalChecked();
     }
     if (!setter->IsNullOrUndefined() && setter->IsObject()) {
+      v8::Local<v8::Context> source_context =
+          getter->GetCreationContextChecked();
       v8::MaybeLocal<v8::Value> maybe_setter_proxy = PassValueToOtherContext(
-          getter->GetCreationContextChecked(), main_context, setter,
+          source_context, main_context, setter, source_context->Global(),
           &object_cache, false, 1, BridgeErrorTarget::kSource);
       DCHECK(!maybe_setter_proxy.IsEmpty());
       setter_proxy = maybe_setter_proxy.ToLocalChecked();
@@ -795,6 +820,8 @@ bool IsCalledFromMainWorld(v8::Isolate* isolate) {
   v8::Local<v8::Context> main_context = frame->MainWorldScriptContext();
   return isolate->GetCurrentContext() == main_context;
 }
+
+}  // namespace
 
 }  // namespace api
 

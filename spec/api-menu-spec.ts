@@ -1,16 +1,23 @@
-import * as cp from 'child_process';
-import * as path from 'path';
-import { assert, expect } from 'chai';
 import { BrowserWindow, Menu, MenuItem } from 'electron/main';
-import { sortMenuItems } from '../lib/browser/api/menu-utils';
+
+import { assert, expect } from 'chai';
+
+import * as cp from 'node:child_process';
+import { once } from 'node:events';
+import * as path from 'node:path';
+import { setTimeout } from 'node:timers/promises';
+
 import { ifit } from './lib/spec-helpers';
 import { closeWindow } from './lib/window-helpers';
-import { once } from 'events';
-import { setTimeout } from 'timers/promises';
+import { sortMenuItems } from '../lib/browser/api/menu-utils';
 
 const fixturesPath = path.resolve(__dirname, 'fixtures');
 
 describe('Menu module', function () {
+  it('sets the correct class name on the prototype', () => {
+    expect(Menu.prototype.constructor.name).to.equal('Menu');
+  });
+
   describe('Menu.buildFromTemplate', () => {
     it('should be able to attach extra fields', () => {
       const menu = Menu.buildFromTemplate([
@@ -809,15 +816,17 @@ describe('Menu module', function () {
       }).to.not.throw();
     });
 
-    it('should emit menu-will-show event', (done) => {
-      menu.on('menu-will-show', () => { done(); });
+    it('should emit menu-will-show event', async () => {
+      const menuWillShow = once(menu, 'menu-will-show');
       menu.popup({ window: w });
+      await menuWillShow;
     });
 
-    it('should emit menu-will-close event', (done) => {
-      menu.on('menu-will-close', () => { done(); });
+    it('should emit menu-will-close event', async () => {
+      const menuWillClose = once(menu, 'menu-will-close');
       menu.popup({ window: w });
       menu.closePopup();
+      await menuWillClose;
     });
 
     it('returns immediately', () => {
@@ -917,6 +926,20 @@ describe('Menu module', function () {
       });
       w.show();
     });
+
+    it('does not crash when rendering menu item with Super or meta accelerator', async () => {
+      const menu = Menu.buildFromTemplate([{
+        label: 'Test Super',
+        accelerator: 'Super+Ctrl+T'
+      }, {
+        label: 'Test Meta',
+        accelerator: 'Meta+Ctrl+T'
+      }]);
+      const menuWillClose = once(menu, 'menu-will-close');
+      menu.popup({ window: w });
+      menu.closePopup();
+      await menuWillClose;
+    });
   });
 
   describe('Menu.setApplicationMenu', () => {
@@ -944,7 +967,7 @@ describe('Menu module', function () {
       await new Promise<void>((resolve) => {
         appProcess.stdout.on('data', data => {
           output += data;
-          if (data.indexOf('Window has') > -1) {
+          if (data.includes('Window has')) {
             resolve();
           }
         });

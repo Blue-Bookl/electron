@@ -1,6 +1,7 @@
 const { app, BrowserWindow, crashReporter } = require('electron');
-const path = require('path');
-const childProcess = require('child_process');
+
+const childProcess = require('node:child_process');
+const path = require('node:path');
 
 app.setVersion('0.1.0');
 

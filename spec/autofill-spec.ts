@@ -1,8 +1,11 @@
 import { BrowserWindow } from 'electron';
-import * as path from 'path';
+
 import { expect } from 'chai';
+
+import * as path from 'node:path';
+import { setTimeout } from 'node:timers/promises';
+
 import { closeAllWindows } from './lib/window-helpers';
-import { setTimeout } from 'timers/promises';
 
 const fixturesPath = path.resolve(__dirname, 'fixtures');
 

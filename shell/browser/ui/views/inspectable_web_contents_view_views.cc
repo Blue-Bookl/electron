@@ -5,17 +5,15 @@
 #include "shell/browser/ui/views/inspectable_web_contents_view_views.h"
 
 #include <memory>
-
 #include <utility>
-#include <vector>
 
 #include "base/memory/raw_ptr.h"
-#include "base/strings/utf_string_conversions.h"
 #include "shell/browser/ui/drag_util.h"
 #include "shell/browser/ui/inspectable_web_contents.h"
 #include "shell/browser/ui/inspectable_web_contents_delegate.h"
 #include "shell/browser/ui/inspectable_web_contents_view_delegate.h"
 #include "ui/base/models/image_model.h"
+#include "ui/gfx/geometry/rounded_corners_f.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/webview/webview.h"
 #include "ui/views/widget/widget.h"
@@ -85,19 +83,19 @@ InspectableWebContentsViewViews::InspectableWebContentsViewViews(
     : InspectableWebContentsView(inspectable_web_contents),
       devtools_web_view_(new views::WebView(nullptr)),
       title_(u"Developer Tools") {
-  if (!inspectable_web_contents_->IsGuest() &&
+  if (!inspectable_web_contents_->is_guest() &&
       inspectable_web_contents_->GetWebContents()->GetNativeView()) {
     auto* contents_web_view = new views::WebView(nullptr);
     contents_web_view->SetWebContents(
         inspectable_web_contents_->GetWebContents());
-    contents_web_view_ = contents_web_view;
+    contents_view_ = contents_web_view_ = contents_web_view;
   } else {
-    contents_web_view_ = new views::Label(u"No content under offscreen mode");
+    contents_view_ = new views::Label(u"No content under offscreen mode");
   }
 
   devtools_web_view_->SetVisible(false);
   AddChildView(devtools_web_view_.get());
-  AddChildView(contents_web_view_.get());
+  AddChildView(contents_view_.get());
 }
 
 InspectableWebContentsViewViews::~InspectableWebContentsViewViews() {
@@ -110,8 +108,13 @@ views::View* InspectableWebContentsViewViews::GetView() {
   return this;
 }
 
-views::View* InspectableWebContentsViewViews::GetWebView() {
-  return contents_web_view_;
+void InspectableWebContentsViewViews::SetCornerRadii(
+    const gfx::RoundedCornersF& corner_radii) {
+  // WebView won't exist for offscreen rendering.
+  if (contents_web_view_) {
+    contents_web_view_->holder()->SetCornerRadii(
+        gfx::RoundedCornersF(corner_radii));
+  }
 }
 
 void InspectableWebContentsViewViews::ShowDevTools(bool activate) {
@@ -122,8 +125,7 @@ void InspectableWebContentsViewViews::ShowDevTools(bool activate) {
   if (devtools_window_) {
     devtools_window_web_view_->SetWebContents(
         inspectable_web_contents_->GetDevToolsWebContents());
-    devtools_window_->SetBounds(
-        inspectable_web_contents()->GetDevToolsBounds());
+    devtools_window_->SetBounds(inspectable_web_contents()->dev_tools_bounds());
     if (activate) {
       devtools_window_->Show();
     } else {
@@ -138,7 +140,7 @@ void InspectableWebContentsViewViews::ShowDevTools(bool activate) {
     devtools_web_view_->SetWebContents(
         inspectable_web_contents_->GetDevToolsWebContents());
     devtools_web_view_->RequestFocus();
-    Layout();
+    DeprecatedLayoutImmediately();
   }
 }
 
@@ -148,15 +150,18 @@ void InspectableWebContentsViewViews::CloseDevTools() {
 
   devtools_visible_ = false;
   if (devtools_window_) {
-    inspectable_web_contents()->SaveDevToolsBounds(
-        devtools_window_->GetWindowBoundsInScreen());
+    auto save_bounds = devtools_window_->IsMinimized()
+                           ? devtools_window_->GetRestoredBounds()
+                           : devtools_window_->GetWindowBoundsInScreen();
+    inspectable_web_contents()->SaveDevToolsBounds(save_bounds);
+
     devtools_window_.reset();
     devtools_window_web_view_ = nullptr;
     devtools_window_delegate_ = nullptr;
   } else {
     devtools_web_view_->SetVisible(false);
     devtools_web_view_->SetWebContents(nullptr);
-    Layout();
+    DeprecatedLayoutImmediately();
   }
 }
 
@@ -182,10 +187,11 @@ void InspectableWebContentsViewViews::SetIsDocked(bool docked, bool activate) {
     devtools_window_delegate_ = new DevToolsWindowDelegate(
         this, devtools_window_web_view_, devtools_window_.get());
 
-    views::Widget::InitParams params;
+    views::Widget::InitParams params{
+        views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET};
     params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     params.delegate = devtools_window_delegate_;
-    params.bounds = inspectable_web_contents()->GetDevToolsBounds();
+    params.bounds = inspectable_web_contents()->dev_tools_bounds();
 
 #if BUILDFLAG(IS_LINUX)
     params.wm_role_name = "devtools";
@@ -205,7 +211,7 @@ void InspectableWebContentsViewViews::SetIsDocked(bool docked, bool activate) {
 void InspectableWebContentsViewViews::SetContentsResizingStrategy(
     const DevToolsContentsResizingStrategy& strategy) {
   strategy_.CopyFrom(strategy);
-  Layout();
+  DeprecatedLayoutImmediately();
 }
 
 void InspectableWebContentsViewViews::SetTitle(const std::u16string& title) {
@@ -215,9 +221,15 @@ void InspectableWebContentsViewViews::SetTitle(const std::u16string& title) {
   }
 }
 
-void InspectableWebContentsViewViews::Layout() {
+const std::u16string InspectableWebContentsViewViews::GetTitle() {
+  return title_;
+}
+
+void InspectableWebContentsViewViews::Layout(PassKey) {
   if (!devtools_web_view_->GetVisible()) {
-    contents_web_view_->SetBoundsRect(GetContentsBounds());
+    contents_view_->SetBoundsRect(GetContentsBounds());
+    // Propagate layout call to all children, for example browser views.
+    LayoutSuperclass<View>(this);
     return;
   }
 
@@ -233,7 +245,10 @@ void InspectableWebContentsViewViews::Layout() {
   new_contents_bounds.set_x(GetMirroredXForRect(new_contents_bounds));
 
   devtools_web_view_->SetBoundsRect(new_devtools_bounds);
-  contents_web_view_->SetBoundsRect(new_contents_bounds);
+  contents_view_->SetBoundsRect(new_contents_bounds);
+
+  // Propagate layout call to all children, for example browser views.
+  LayoutSuperclass<View>(this);
 
   if (GetDelegate())
     GetDelegate()->DevToolsResized();

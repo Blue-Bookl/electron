@@ -13,20 +13,12 @@ bool IsBuiltinSpellCheckerEnabled() {
   return BUILDFLAG(ENABLE_BUILTIN_SPELLCHECKER);
 }
 
-bool IsOffscreenRenderingEnabled() {
-  return BUILDFLAG(ENABLE_OSR);
-}
-
 bool IsPDFViewerEnabled() {
   return BUILDFLAG(ENABLE_PDF_VIEWER);
 }
 
 bool IsFakeLocationProviderEnabled() {
   return BUILDFLAG(OVERRIDE_LOCATION_PROVIDER);
-}
-
-bool IsViewApiEnabled() {
-  return BUILDFLAG(ENABLE_VIEWS_API);
 }
 
 bool IsPrintingEnabled() {
@@ -51,11 +43,9 @@ void Initialize(v8::Local<v8::Object> exports,
                 void* priv) {
   gin_helper::Dictionary dict(context->GetIsolate(), exports);
   dict.SetMethod("isBuiltinSpellCheckerEnabled", &IsBuiltinSpellCheckerEnabled);
-  dict.SetMethod("isOffscreenRenderingEnabled", &IsOffscreenRenderingEnabled);
   dict.SetMethod("isPDFViewerEnabled", &IsPDFViewerEnabled);
   dict.SetMethod("isFakeLocationProviderEnabled",
                  &IsFakeLocationProviderEnabled);
-  dict.SetMethod("isViewApiEnabled", &IsViewApiEnabled);
   dict.SetMethod("isPrintingEnabled", &IsPrintingEnabled);
   dict.SetMethod("isComponentBuild", &IsComponentBuild);
   dict.SetMethod("isExtensionsEnabled", &IsExtensionsEnabled);

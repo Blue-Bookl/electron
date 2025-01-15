@@ -17,6 +17,7 @@
 #include "services/network/public/cpp/cors/origin_access_list.h"
 #include "shell/browser/browser_process_impl.h"
 #include "shell/browser/electron_browser_client.h"
+#include "shell/browser/electron_browser_context.h"
 #include "shell/browser/net/system_network_context_manager.h"
 
 namespace electron {
@@ -72,7 +73,7 @@ void NetworkContextService::ConfigureNetworkContextParams(
 
   // Enable the HTTP cache.
   network_context_params->http_cache_enabled =
-      browser_context_->CanUseHttpCache();
+      browser_context_->can_use_http_cache();
 
   network_context_params->cookie_manager_params =
       network::mojom::CookieManagerParams::New();
@@ -80,10 +81,8 @@ void NetworkContextService::ConfigureNetworkContextParams(
   // Configure on-disk storage for persistent sessions.
   if (!in_memory) {
     // Configure the HTTP cache path and size.
-    network_context_params->http_cache_directory =
-        path.Append(chrome::kCacheDirname);
     network_context_params->http_cache_max_size =
-        browser_context_->GetMaxCacheSize();
+        browser_context_->max_cache_size();
 
     network_context_params->file_paths =
         network::mojom::NetworkContextFilePaths::New();
@@ -92,6 +91,8 @@ void NetworkContextService::ConfigureNetworkContextParams(
     network_context_params->file_paths->unsandboxed_data_path = path;
     network_context_params->file_paths->trigger_migration =
         ShouldTriggerNetworkDataMigration();
+    network_context_params->file_paths->http_cache_directory =
+        path.Append(chrome::kCacheDirname);
 
     // Currently this just contains HttpServerProperties
     network_context_params->file_paths->http_server_properties_file_name =

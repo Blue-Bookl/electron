@@ -1,12 +1,17 @@
-import { expect } from 'chai';
-import * as childProcess from 'child_process';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as util from 'util';
-import { getRemoteContext, ifdescribe, ifit, itremote, useRemoteContext } from './lib/spec-helpers';
 import { webContents } from 'electron/main';
-import { EventEmitter } from 'stream';
-import { once } from 'events';
+
+import { expect } from 'chai';
+
+import * as childProcess from 'node:child_process';
+import { once } from 'node:events';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { EventEmitter } from 'node:stream';
+import * as util from 'node:util';
+
+import { copyMacOSFixtureApp, getCodesignIdentity, shouldRunCodesignTests, signApp, spawn } from './lib/codesign-helpers';
+import { withTempDirectory } from './lib/fs-helpers';
+import { getRemoteContext, ifdescribe, ifit, itremote, useRemoteContext } from './lib/spec-helpers';
 
 const mainFixturesPath = path.resolve(__dirname, 'fixtures');
 
@@ -22,6 +27,12 @@ describe('node feature', () => {
         const [msg] = await message;
         expect(msg).to.equal('message');
       });
+
+      it('Has its module searth paths restricted', async () => {
+        const child = childProcess.fork(path.join(fixtures, 'module', 'module-paths.js'));
+        const [msg] = await once(child, 'message');
+        expect(msg.length).to.equal(2);
+      });
     });
   });
 
@@ -30,7 +41,7 @@ describe('node feature', () => {
 
     describe('child_process.fork', () => {
       itremote('works in current process', async (fixtures: string) => {
-        const child = require('child_process').fork(require('path').join(fixtures, 'module', 'ping.js'));
+        const child = require('node:child_process').fork(require('node:path').join(fixtures, 'module', 'ping.js'));
         const message = new Promise<any>(resolve => child.once('message', resolve));
         child.send('message');
         const msg = await message;
@@ -39,7 +50,7 @@ describe('node feature', () => {
 
       itremote('preserves args', async (fixtures: string) => {
         const args = ['--expose_gc', '-test', '1'];
-        const child = require('child_process').fork(require('path').join(fixtures, 'module', 'process_args.js'), args);
+        const child = require('node:child_process').fork(require('node:path').join(fixtures, 'module', 'process_args.js'), args);
         const message = new Promise<any>(resolve => child.once('message', resolve));
         child.send('message');
         const msg = await message;
@@ -47,7 +58,7 @@ describe('node feature', () => {
       }, [fixtures]);
 
       itremote('works in forked process', async (fixtures: string) => {
-        const child = require('child_process').fork(require('path').join(fixtures, 'module', 'fork_ping.js'));
+        const child = require('node:child_process').fork(require('node:path').join(fixtures, 'module', 'fork_ping.js'));
         const message = new Promise<any>(resolve => child.once('message', resolve));
         child.send('message');
         const msg = await message;
@@ -55,7 +66,7 @@ describe('node feature', () => {
       }, [fixtures]);
 
       itremote('works in forked process when options.env is specified', async (fixtures: string) => {
-        const child = require('child_process').fork(require('path').join(fixtures, 'module', 'fork_ping.js'), [], {
+        const child = require('node:child_process').fork(require('node:path').join(fixtures, 'module', 'fork_ping.js'), [], {
           path: process.env.PATH
         });
         const message = new Promise<any>(resolve => child.once('message', resolve));
@@ -65,7 +76,7 @@ describe('node feature', () => {
       }, [fixtures]);
 
       itremote('has String::localeCompare working in script', async (fixtures: string) => {
-        const child = require('child_process').fork(require('path').join(fixtures, 'module', 'locale-compare.js'));
+        const child = require('node:child_process').fork(require('node:path').join(fixtures, 'module', 'locale-compare.js'));
         const message = new Promise<any>(resolve => child.once('message', resolve));
         child.send('message');
         const msg = await message;
@@ -73,7 +84,7 @@ describe('node feature', () => {
       }, [fixtures]);
 
       itremote('has setImmediate working in script', async (fixtures: string) => {
-        const child = require('child_process').fork(require('path').join(fixtures, 'module', 'set-immediate.js'));
+        const child = require('node:child_process').fork(require('node:path').join(fixtures, 'module', 'set-immediate.js'));
         const message = new Promise<any>(resolve => child.once('message', resolve));
         child.send('message');
         const msg = await message;
@@ -81,7 +92,7 @@ describe('node feature', () => {
       }, [fixtures]);
 
       itremote('pipes stdio', async (fixtures: string) => {
-        const child = require('child_process').fork(require('path').join(fixtures, 'module', 'process-stdout.js'), { silent: true });
+        const child = require('node:child_process').fork(require('node:path').join(fixtures, 'module', 'process-stdout.js'), { silent: true });
         let data = '';
         child.stdout.on('data', (chunk: any) => {
           data += String(chunk);
@@ -93,7 +104,7 @@ describe('node feature', () => {
 
       itremote('works when sending a message to a process forked with the --eval argument', async () => {
         const source = "process.on('message', (message) => { process.send(message) })";
-        const forked = require('child_process').fork('--eval', [source]);
+        const forked = require('node:child_process').fork('--eval', [source]);
         const message = new Promise(resolve => forked.once('message', resolve));
         forked.send('hello');
         const msg = await message;
@@ -102,7 +113,7 @@ describe('node feature', () => {
 
       it('has the electron version in process.versions', async () => {
         const source = 'process.send(process.versions)';
-        const forked = require('child_process').fork('--eval', [source]);
+        const forked = require('node:child_process').fork('--eval', [source]);
         const [message] = await once(forked, 'message');
         expect(message)
           .to.have.own.property('electron')
@@ -113,7 +124,7 @@ describe('node feature', () => {
 
     describe('child_process.spawn', () => {
       itremote('supports spawning Electron as a node process via the ELECTRON_RUN_AS_NODE env var', async (fixtures: string) => {
-        const child = require('child_process').spawn(process.execPath, [require('path').join(fixtures, 'module', 'run-as-node.js')], {
+        const child = require('node:child_process').spawn(process.execPath, [require('node:path').join(fixtures, 'module', 'run-as-node.js')], {
           env: {
             ELECTRON_RUN_AS_NODE: true
           }
@@ -149,6 +160,47 @@ describe('node feature', () => {
         expect(stdout).to.not.be.empty();
       });
     });
+  });
+
+  describe('EventSource', () => {
+    itremote('works correctly when nodeIntegration is enabled in the renderer', () => {
+      const es = new EventSource('https://example.com');
+      expect(es).to.have.property('url').that.is.a('string');
+      expect(es).to.have.property('readyState').that.is.a('number');
+      expect(es).to.have.property('withCredentials').that.is.a('boolean');
+    });
+  });
+
+  describe('fetch', () => {
+    itremote('works correctly when nodeIntegration is enabled in the renderer', async (fixtures: string) => {
+      const file = require('node:path').join(fixtures, 'hello.txt');
+      expect(() => {
+        fetch('file://' + file);
+      }).to.not.throw();
+
+      expect(() => {
+        const formData = new FormData();
+        formData.append('username', 'Groucho');
+      }).not.to.throw();
+
+      expect(() => {
+        const request = new Request('https://example.com', {
+          method: 'POST',
+          body: JSON.stringify({ foo: 'bar' })
+        });
+        expect(request.method).to.equal('POST');
+      }).not.to.throw();
+
+      expect(() => {
+        const response = new Response('Hello, world!');
+        expect(response.status).to.equal(200);
+      }).not.to.throw();
+
+      expect(() => {
+        const headers = new Headers();
+        headers.append('Content-Type', 'text/xml');
+      }).not.to.throw();
+    }, [fixtures]);
   });
 
   it('does not hang when using the fs module in the renderer process', async () => {
@@ -195,9 +247,9 @@ describe('node feature', () => {
       emitter.removeAllListeners(eventName);
       emitter.once(eventName, (...args) => {
         emitter.removeAllListeners(eventName);
-        listeners.forEach((listener) => {
+        for (const listener of listeners) {
           emitter.on(eventName, listener);
-        });
+        }
 
         callback(...args);
       });
@@ -268,7 +320,7 @@ describe('node feature', () => {
 
     describe('setTimeout in fs callback', () => {
       itremote('does not crash', async (filename: string) => {
-        await new Promise(resolve => require('fs').readFile(filename, () => {
+        await new Promise(resolve => require('node:fs').readFile(filename, () => {
           setTimeout(resolve, 0);
         }));
       }, [__filename]);
@@ -277,7 +329,7 @@ describe('node feature', () => {
     describe('error thrown in renderer process node context', () => {
       itremote('gets emitted as a process uncaughtException event', async (filename: string) => {
         const error = new Error('boo!');
-        require('fs').readFile(filename, () => {
+        require('node:fs').readFile(filename, () => {
           throw error;
         });
         await new Promise<void>((resolve, reject) => {
@@ -295,9 +347,9 @@ describe('node feature', () => {
 
     describe('URL handling in the renderer process', () => {
       itremote('can successfully handle WHATWG URLs constructed by Blink', (fixtures: string) => {
-        const url = new URL('file://' + require('path').resolve(fixtures, 'pages', 'base-page.html'));
+        const url = new URL('file://' + require('node:path').resolve(fixtures, 'pages', 'base-page.html'));
         expect(() => {
-          require('fs').createReadStream(url);
+          require('node:fs').createReadStream(url);
         }).to.not.throw();
       }, [fixtures]);
     });
@@ -308,7 +360,7 @@ describe('node feature', () => {
       });
 
       itremote('works from the timers module', async () => {
-        await new Promise(resolve => require('timers').setTimeout(resolve, 10));
+        await new Promise(resolve => require('node:timers').setTimeout(resolve, 10));
       });
     });
 
@@ -323,7 +375,7 @@ describe('node feature', () => {
       });
 
       itremote('can be scheduled in time from timers module', async () => {
-        const { setInterval, clearInterval } = require('timers');
+        const { setInterval, clearInterval } = require('node:timers');
         await new Promise<void>(resolve => {
           const id = setInterval(() => {
             clearInterval(id);
@@ -361,12 +413,12 @@ describe('node feature', () => {
 
   ifdescribe(process.platform === 'darwin')('net.connect', () => {
     itremote('emit error when connect to a socket path without listeners', async (fixtures: string) => {
-      const socketPath = require('path').join(require('os').tmpdir(), 'electron-test.sock');
-      const script = require('path').join(fixtures, 'module', 'create_socket.js');
-      const child = require('child_process').fork(script, [socketPath]);
+      const socketPath = require('node:path').join(require('node:os').tmpdir(), 'electron-test.sock');
+      const script = require('node:path').join(fixtures, 'module', 'create_socket.js');
+      const child = require('node:child_process').fork(script, [socketPath]);
       const code = await new Promise(resolve => child.once('exit', resolve));
       expect(code).to.equal(0);
-      const client = require('net').connect(socketPath);
+      const client = require('node:net').connect(socketPath);
       const error = await new Promise<any>(resolve => client.once('error', resolve));
       expect(error.code).to.equal('ECONNREFUSED');
     }, [fixtures]);
@@ -399,7 +451,7 @@ describe('node feature', () => {
     });
 
     itremote('does not crash for crypto operations', () => {
-      const crypto = require('crypto');
+      const crypto = require('node:crypto');
       const data = 'lG9E+/g4JmRmedDAnihtBD4Dfaha/GFOjd+xUOQI05UtfVX3DjUXvrS98p7kZQwY3LNhdiFo7MY5rGft8yBuDhKuNNag9vRx/44IuClDhdQ=';
       const key = 'q90K9yBqhWZnAMCMTOJfPQ==';
       const cipherText = '{"error_code":114,"error_message":"Tham số không hợp lệ","data":null}';
@@ -413,7 +465,7 @@ describe('node feature', () => {
     });
 
     itremote('does not crash when using crypto.diffieHellman() constructors', () => {
-      const crypto = require('crypto');
+      const crypto = require('node:crypto');
 
       crypto.createDiffieHellman('abc');
       crypto.createDiffieHellman('abc', 2);
@@ -425,7 +477,7 @@ describe('node feature', () => {
     });
 
     itremote('does not crash when calling crypto.createPrivateKey() with an unsupported algorithm', () => {
-      const crypto = require('crypto');
+      const crypto = require('node:crypto');
 
       const ed448 = {
         crv: 'Ed448',
@@ -481,58 +533,58 @@ describe('node feature', () => {
 
   describe('vm.runInNewContext', () => {
     itremote('should not crash', () => {
-      require('vm').runInNewContext('');
+      require('node:vm').runInNewContext('');
     });
   });
 
   describe('crypto', () => {
     useRemoteContext();
     itremote('should list the ripemd160 hash in getHashes', () => {
-      expect(require('crypto').getHashes()).to.include('ripemd160');
+      expect(require('node:crypto').getHashes()).to.include('ripemd160');
     });
 
     itremote('should be able to create a ripemd160 hash and use it', () => {
-      const hash = require('crypto').createHash('ripemd160');
+      const hash = require('node:crypto').createHash('ripemd160');
       hash.update('electron-ripemd160');
       expect(hash.digest('hex')).to.equal('fa7fec13c624009ab126ebb99eda6525583395fe');
     });
 
     itremote('should list aes-{128,256}-cfb in getCiphers', () => {
-      expect(require('crypto').getCiphers()).to.include.members(['aes-128-cfb', 'aes-256-cfb']);
+      expect(require('node:crypto').getCiphers()).to.include.members(['aes-128-cfb', 'aes-256-cfb']);
     });
 
     itremote('should be able to create an aes-128-cfb cipher', () => {
-      require('crypto').createCipheriv('aes-128-cfb', '0123456789abcdef', '0123456789abcdef');
+      require('node:crypto').createCipheriv('aes-128-cfb', '0123456789abcdef', '0123456789abcdef');
     });
 
     itremote('should be able to create an aes-256-cfb cipher', () => {
-      require('crypto').createCipheriv('aes-256-cfb', '0123456789abcdef0123456789abcdef', '0123456789abcdef');
+      require('node:crypto').createCipheriv('aes-256-cfb', '0123456789abcdef0123456789abcdef', '0123456789abcdef');
     });
 
     itremote('should be able to create a bf-{cbc,cfb,ecb} ciphers', () => {
-      require('crypto').createCipheriv('bf-cbc', Buffer.from('0123456789abcdef'), Buffer.from('01234567'));
-      require('crypto').createCipheriv('bf-cfb', Buffer.from('0123456789abcdef'), Buffer.from('01234567'));
-      require('crypto').createCipheriv('bf-ecb', Buffer.from('0123456789abcdef'), Buffer.from('01234567'));
+      require('node:crypto').createCipheriv('bf-cbc', Buffer.from('0123456789abcdef'), Buffer.from('01234567'));
+      require('node:crypto').createCipheriv('bf-cfb', Buffer.from('0123456789abcdef'), Buffer.from('01234567'));
+      require('node:crypto').createCipheriv('bf-ecb', Buffer.from('0123456789abcdef'), Buffer.from('01234567'));
     });
 
     itremote('should list des-ede-cbc in getCiphers', () => {
-      expect(require('crypto').getCiphers()).to.include('des-ede-cbc');
+      expect(require('node:crypto').getCiphers()).to.include('des-ede-cbc');
     });
 
     itremote('should be able to create an des-ede-cbc cipher', () => {
       const key = Buffer.from('0123456789abcdeff1e0d3c2b5a49786', 'hex');
       const iv = Buffer.from('fedcba9876543210', 'hex');
-      require('crypto').createCipheriv('des-ede-cbc', key, iv);
+      require('node:crypto').createCipheriv('des-ede-cbc', key, iv);
     });
 
     itremote('should not crash when getting an ECDH key', () => {
-      const ecdh = require('crypto').createECDH('prime256v1');
+      const ecdh = require('node:crypto').createECDH('prime256v1');
       expect(ecdh.generateKeys()).to.be.an.instanceof(Buffer);
       expect(ecdh.getPrivateKey()).to.be.an.instanceof(Buffer);
     });
 
     itremote('should not crash when generating DH keys or fetching DH fields', () => {
-      const dh = require('crypto').createDiffieHellman('modp15');
+      const dh = require('node:crypto').createDiffieHellman('modp15');
       expect(dh.generateKeys()).to.be.an.instanceof(Buffer);
       expect(dh.getPublicKey()).to.be.an.instanceof(Buffer);
       expect(dh.getPrivateKey()).to.be.an.instanceof(Buffer);
@@ -541,7 +593,7 @@ describe('node feature', () => {
     });
 
     itremote('should not crash when creating an ECDH cipher', () => {
-      const crypto = require('crypto');
+      const crypto = require('node:crypto');
       const dh = crypto.createECDH('prime256v1');
       dh.generateKeys();
       dh.setPrivateKey(dh.getPrivateKey());
@@ -656,6 +708,66 @@ describe('node feature', () => {
       const child = childProcess.spawn(process.execPath, [appPath], { env });
       const [code] = await once(child, 'exit');
       expect(code).to.equal(0);
+    });
+  });
+
+  ifdescribe(shouldRunCodesignTests)('NODE_OPTIONS in signed app', function () {
+    let identity = '';
+
+    beforeEach(function () {
+      const result = getCodesignIdentity();
+      if (result === null) {
+        this.skip();
+      } else {
+        identity = result;
+      }
+    });
+
+    const script = path.join(fixtures, 'api', 'fork-with-node-options.js');
+    const nodeOptionsWarning = 'Node.js environment variables are disabled because this process is invoked by other apps';
+
+    it('is disabled when invoked by other apps in ELECTRON_RUN_AS_NODE mode', async () => {
+      await withTempDirectory(async (dir) => {
+        const appPath = await copyMacOSFixtureApp(dir);
+        await signApp(appPath, identity);
+        // Invoke Electron by using the system node binary as middle layer, so
+        // the check of NODE_OPTIONS will think the process is started by other
+        // apps.
+        const { code, out } = await spawn('node', [script, path.join(appPath, 'Contents/MacOS/Electron')]);
+        expect(code).to.equal(0);
+        expect(out).to.include(nodeOptionsWarning);
+      });
+    });
+
+    it('is disabled when invoked by alien binary in app bundle in ELECTRON_RUN_AS_NODE mode', async function () {
+      await withTempDirectory(async (dir) => {
+        const appPath = await copyMacOSFixtureApp(dir);
+        await signApp(appPath, identity);
+        // Find system node and copy it to app bundle.
+        const nodePath = process.env.PATH?.split(path.delimiter).find(dir => fs.existsSync(path.join(dir, 'node')));
+        if (!nodePath) {
+          this.skip();
+          return;
+        }
+        const alienBinary = path.join(appPath, 'Contents/MacOS/node');
+        await fs.promises.cp(path.join(nodePath, 'node'), alienBinary, { recursive: true });
+        // Try to execute electron app from the alien node in app bundle.
+        const { code, out } = await spawn(alienBinary, [script, path.join(appPath, 'Contents/MacOS/Electron')]);
+        expect(code).to.equal(0);
+        expect(out).to.include(nodeOptionsWarning);
+      });
+    });
+
+    it('is respected when invoked from self', async () => {
+      await withTempDirectory(async (dir) => {
+        const appPath = await copyMacOSFixtureApp(dir, null);
+        await signApp(appPath, identity);
+        const appExePath = path.join(appPath, 'Contents/MacOS/Electron');
+        const { code, out } = await spawn(appExePath, [script, appExePath]);
+        expect(code).to.equal(1);
+        expect(out).to.not.include(nodeOptionsWarning);
+        expect(out).to.include('NODE_OPTIONS passed to child');
+      });
     });
   });
 
@@ -867,16 +979,23 @@ describe('node feature', () => {
   });
 
   it('performs microtask checkpoint correctly', (done) => {
+    let timer : NodeJS.Timeout;
+    const listener = () => {
+      done(new Error('catch block is delayed to next tick'));
+    };
+
     const f3 = async () => {
       return new Promise((resolve, reject) => {
+        timer = setTimeout(listener);
         reject(new Error('oops'));
       });
     };
 
-    process.once('unhandledRejection', () => done('catch block is delayed to next tick'));
-
     setTimeout(() => {
-      f3().catch(() => done());
+      f3().catch(() => {
+        clearTimeout(timer);
+        done();
+      });
     });
   });
 });

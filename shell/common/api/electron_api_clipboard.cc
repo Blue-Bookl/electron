@@ -7,16 +7,20 @@
 #include <map>
 
 #include "base/containers/contains.h"
+#include "base/containers/to_vector.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
+#include "shell/browser/browser.h"
 #include "shell/common/gin_converters/image_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/node_includes.h"
+#include "shell/common/process_util.h"
 #include "third_party/skia/include/core/SkBitmap.h"
-#include "third_party/skia/include/core/SkImageInfo.h"
-#include "third_party/skia/include/core/SkPixmap.h"
 #include "ui/base/clipboard/clipboard_format_type.h"
+#include "ui/base/clipboard/file_info.h"
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 #include "ui/gfx/codec/png_codec.h"
+#include "ui/gfx/image/image.h"
 
 namespace electron::api {
 
@@ -40,8 +44,8 @@ std::vector<std::u16string> Clipboard::AvailableFormats(
 bool Clipboard::Has(const std::string& format_string,
                     gin_helper::Arguments* args) {
   ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
-  ui::ClipboardFormatType format(
-      ui::ClipboardFormatType::GetType(format_string));
+  ui::ClipboardFormatType format =
+      ui::ClipboardFormatType::CustomPlatformType(format_string);
   if (format.GetName().empty())
     format = ui::ClipboardFormatType::CustomPlatformType(format_string);
   return clipboard->IsFormatAvailable(format, GetClipboardBuffer(args),
@@ -108,12 +112,16 @@ void Clipboard::WriteBuffer(const std::string& format,
     return;
   }
 
+  CHECK(buffer->IsArrayBufferView());
+  v8::Local<v8::ArrayBufferView> buffer_view = buffer.As<v8::ArrayBufferView>();
+  const size_t n_bytes = buffer_view->ByteLength();
+  mojo_base::BigBuffer big_buffer{n_bytes};
+  [[maybe_unused]] const size_t n_got =
+      buffer_view->CopyContents(big_buffer.data(), n_bytes);
+  DCHECK_EQ(n_got, n_bytes);
+
   ui::ScopedClipboardWriter writer(GetClipboardBuffer(args));
-  base::span<const uint8_t> payload_span(
-      reinterpret_cast<const uint8_t*>(node::Buffer::Data(buffer)),
-      node::Buffer::Length(buffer));
-  writer.WriteUnsafeRawData(base::UTF8ToUTF16(format),
-                            mojo_base::BigBuffer(payload_span));
+  writer.WriteUnsafeRawData(base::UTF8ToUTF16(format), std::move(big_buffer));
 }
 
 void Clipboard::Write(const gin_helper::Dictionary& data,
@@ -135,7 +143,7 @@ void Clipboard::Write(const gin_helper::Dictionary& data,
   }
 
   if (data.Get("html", &html))
-    writer.WriteHTML(html, std::string(), ui::ClipboardContentType::kSanitized);
+    writer.WriteHTML(html, std::string());
 
   if (data.Get("image", &image))
     writer.WriteImage(image.AsBitmap());
@@ -196,14 +204,13 @@ std::u16string Clipboard::ReadHTML(gin_helper::Arguments* args) {
 void Clipboard::WriteHTML(const std::u16string& html,
                           gin_helper::Arguments* args) {
   ui::ScopedClipboardWriter writer(GetClipboardBuffer(args));
-  writer.WriteHTML(html, std::string(), ui::ClipboardContentType::kSanitized);
+  writer.WriteHTML(html, std::string());
 }
 
 v8::Local<v8::Value> Clipboard::ReadBookmark(gin_helper::Arguments* args) {
   std::u16string title;
   std::string url;
-  gin_helper::Dictionary dict =
-      gin_helper::Dictionary::CreateEmpty(args->isolate());
+  auto dict = gin_helper::Dictionary::CreateEmpty(args->isolate());
   ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
   clipboard->ReadBookmark(/* data_dst = */ nullptr, &title, &url);
   dict.Set("title", title);
@@ -219,19 +226,32 @@ void Clipboard::WriteBookmark(const std::u16string& title,
 }
 
 gfx::Image Clipboard::ReadImage(gin_helper::Arguments* args) {
+  // The ReadPng uses thread pool which requires app ready.
+  if (IsBrowserProcess() && !Browser::Get()->is_ready()) {
+    args->ThrowError(
+        "clipboard.readImage is available only after app ready in the main "
+        "process");
+    return {};
+  }
+
   ui::Clipboard* clipboard = ui::Clipboard::GetForCurrentThread();
-  absl::optional<gfx::Image> image;
+  std::optional<gfx::Image> image;
+
+  base::RunLoop run_loop(base::RunLoop::Type::kNestableTasksAllowed);
+  base::RepeatingClosure callback = run_loop.QuitClosure();
   clipboard->ReadPng(
       GetClipboardBuffer(args),
       /* data_dst = */ nullptr,
       base::BindOnce(
-          [](absl::optional<gfx::Image>* image,
+          [](std::optional<gfx::Image>* image, base::RepeatingClosure cb,
              const std::vector<uint8_t>& result) {
-            SkBitmap bitmap;
-            gfx::PNGCodec::Decode(result.data(), result.size(), &bitmap);
+            SkBitmap bitmap = gfx::PNGCodec::Decode(result);
             image->emplace(gfx::Image::CreateFrom1xBitmap(bitmap));
+            std::move(cb).Run();
           },
-          &image));
+          &image, std::move(callback)));
+  run_loop.Run();
+
   DCHECK(image.has_value());
   return image.value();
 }
@@ -251,12 +271,20 @@ void Clipboard::WriteImage(const gfx::Image& image,
 #if !BUILDFLAG(IS_MAC)
 void Clipboard::WriteFindText(const std::u16string& text) {}
 std::u16string Clipboard::ReadFindText() {
-  return std::u16string();
+  return {};
 }
 #endif
 
 void Clipboard::Clear(gin_helper::Arguments* args) {
   ui::Clipboard::GetForCurrentThread()->Clear(GetClipboardBuffer(args));
+}
+
+// This exists for testing purposes ONLY.
+void Clipboard::WriteFilesForTesting(const std::vector<base::FilePath>& files) {
+  auto to_info = [](const auto& p) { return ui::FileInfo{p, p.BaseName()}; };
+  auto file_infos = base::ToVector(files, to_info);
+  ui::ScopedClipboardWriter writer(ui::ClipboardBuffer::kCopyPaste);
+  writer.WriteFilenames(ui::FileInfosToURIList(file_infos));
 }
 
 }  // namespace electron::api
@@ -287,6 +315,8 @@ void Initialize(v8::Local<v8::Object> exports,
   dict.SetMethod("writeFindText", &electron::api::Clipboard::WriteFindText);
   dict.SetMethod("readBuffer", &electron::api::Clipboard::ReadBuffer);
   dict.SetMethod("writeBuffer", &electron::api::Clipboard::WriteBuffer);
+  dict.SetMethod("_writeFilesForTesting",
+                 &electron::api::Clipboard::WriteFilesForTesting);
   dict.SetMethod("clear", &electron::api::Clipboard::Clear);
 }
 

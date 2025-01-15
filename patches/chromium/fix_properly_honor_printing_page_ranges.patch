@@ -10,10 +10,10 @@ them should they exist.
 This will be upstreamed.
 
 diff --git a/printing/printing_context_mac.h b/printing/printing_context_mac.h
-index 3f6289a9cee6d94349ef30760aad4a2b0a015c25..63b833fb3473f526be21ebe4549e17ee1e996580 100644
+index 5b469b3b6bd11d8e0baa08e9be257990ac9bc438..c1410e5d8112f0319de40e4fbf41dbaea4b9733c 100644
 --- a/printing/printing_context_mac.h
 +++ b/printing/printing_context_mac.h
-@@ -88,6 +88,10 @@ class COMPONENT_EXPORT(PRINTING) PrintingContextMac : public PrintingContext {
+@@ -84,6 +84,10 @@ class COMPONENT_EXPORT(PRINTING) PrintingContextMac : public PrintingContext {
    // Returns true if the orientation was set.
    bool SetOrientationIsLandscape(bool landscape);
  
@@ -25,10 +25,10 @@ index 3f6289a9cee6d94349ef30760aad4a2b0a015c25..63b833fb3473f526be21ebe4549e17ee
    // Returns true if duplex mode is set.
    bool SetDuplexModeInPrintSettings(mojom::DuplexMode mode);
 diff --git a/printing/printing_context_mac.mm b/printing/printing_context_mac.mm
-index 01df1c7ddfeb4a08e9c35e3db2dd54823d8236bb..9b851930d6d1b966f8286e2a309141d545c60277 100644
+index f39f8b2dd3aa2b89498ed5331aa9b9ba6a02abf5..c0e155c14b2b4e81cde35cea1db284bc4c43f5e6 100644
 --- a/printing/printing_context_mac.mm
 +++ b/printing/printing_context_mac.mm
-@@ -204,7 +204,8 @@ PMPaper MatchPaper(CFArrayRef paper_list,
+@@ -520,7 +520,8 @@ bool IsIppColorModelColorful(mojom::ColorModel color_model) {
          !SetCollateInPrintSettings(settings_->collate()) ||
          !SetDuplexModeInPrintSettings(settings_->duplex_mode()) ||
          !SetOutputColor(static_cast<int>(settings_->color())) ||
@@ -38,7 +38,7 @@ index 01df1c7ddfeb4a08e9c35e3db2dd54823d8236bb..9b851930d6d1b966f8286e2a309141d5
        return OnError();
      }
    }
-@@ -357,6 +358,22 @@ PMPaper MatchPaper(CFArrayRef paper_list,
+@@ -673,6 +674,22 @@ bool IsIppColorModelColorful(mojom::ColorModel color_model) {
    return PMSetCopies(print_settings, copies, false) == noErr;
  }
  
@@ -62,10 +62,10 @@ index 01df1c7ddfeb4a08e9c35e3db2dd54823d8236bb..9b851930d6d1b966f8286e2a309141d5
    PMPrintSettings print_settings =
        static_cast<PMPrintSettings>([print_info_ PMPrintSettings]);
 diff --git a/printing/printing_context_system_dialog_win.cc b/printing/printing_context_system_dialog_win.cc
-index 07847521e7217c78480205812a73cc89503c00d2..586e866ca7ec0eb0b573d23e3bd95792c22bff20 100644
+index 858e1bb00390b6097a27ffe20997672914e8f28f..953f203d21b4da559791efe228f27b56c2f85263 100644
 --- a/printing/printing_context_system_dialog_win.cc
 +++ b/printing/printing_context_system_dialog_win.cc
-@@ -75,14 +75,28 @@ void PrintingContextSystemDialogWin::AskUserForSettings(
+@@ -73,14 +73,30 @@ void PrintingContextSystemDialogWin::AskUserForSettings(
    PRINTPAGERANGE ranges[32];
    dialog_options.nStartPage = START_PAGE_GENERAL;
    if (max_pages) {
@@ -78,11 +78,13 @@ index 07847521e7217c78480205812a73cc89503c00d2..586e866ca7ec0eb0b573d23e3bd95792
 +
 +    auto page_ranges = settings_->ranges();
 +    if (!page_ranges.empty()) {
-+      for (size_t i = 0; i < page_ranges.size(); i++) {
-+        auto range = page_ranges[i];
-+        ranges[i].nFromPage = range.from + 1;
-+        ranges[i].nToPage = range.to + 1;
-+      }
++      UNSAFE_TODO({
++        for (size_t i = 0; i < page_ranges.size(); i++) {
++          auto range = page_ranges[i];
++          ranges[i].nFromPage = range.from + 1;
++          ranges[i].nToPage = range.to + 1;
++        }
++      });
 +      dialog_options.nPageRanges = page_ranges.size();
 +
 +      // Ensure the Pages radio button is selected.
@@ -100,7 +102,7 @@ index 07847521e7217c78480205812a73cc89503c00d2..586e866ca7ec0eb0b573d23e3bd95792
    } else {
      // No need to bother, we don't know how many pages are available.
 diff --git a/ui/gtk/printing/print_dialog_gtk.cc b/ui/gtk/printing/print_dialog_gtk.cc
-index afa936ce95602d5e66189303a73d7824611187b3..89371a4f0d3216f21761adc51bdd2accec0c74a1 100644
+index b04cb0b9a9fd25e638c8e5cfac08ddf5dbd1a67e..393815e33b8c700baa349482867fc7f1425ff09f 100644
 --- a/ui/gtk/printing/print_dialog_gtk.cc
 +++ b/ui/gtk/printing/print_dialog_gtk.cc
 @@ -247,6 +247,24 @@ void PrintDialogGtk::UpdateSettings(

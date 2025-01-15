@@ -12,7 +12,7 @@
 #include <memory>
 #include <string>
 
-#include "base/compiler_specific.h"
+#include "base/memory/weak_ptr.h"
 #include "base/win/scoped_gdi_object.h"
 #include "shell/browser/ui/tray_icon.h"
 #include "shell/browser/ui/win/notify_icon_host.h"
@@ -44,10 +44,13 @@ class NotifyIcon : public TrayIcon {
   // otherwise displays the context menu if there is one.
   void HandleClickEvent(int modifiers,
                         bool left_button_click,
-                        bool double_button_click);
+                        bool double_button_click,
+                        bool middle_button_click);
 
   // Handles a mouse move event from the user.
   void HandleMouseMoveEvent(int modifiers);
+  void HandleMouseEntered(int modifiers);
+  void HandleMouseExited(int modifiers);
 
   // Re-creates the status tray icon now after the taskbar has been created.
   void ResetIcon();
@@ -65,7 +68,7 @@ class NotifyIcon : public TrayIcon {
   void RemoveBalloon() override;
   void Focus() override;
   void PopUpContextMenu(const gfx::Point& pos,
-                        raw_ptr<ElectronMenuModel> menu_model) override;
+                        base::WeakPtr<ElectronMenuModel> menu_model) override;
   void CloseContextMenu() override;
   void SetContextMenu(raw_ptr<ElectronMenuModel> menu_model) override;
   gfx::Rect GetBounds() override;

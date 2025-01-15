@@ -12,11 +12,9 @@
 #include "base/command_line.h"
 #include "base/memory/raw_ptr.h"
 #include "base/path_service.h"
-#include "base/strings/string_split.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/net/chrome_mojo_proxy_resolver_factory.h"
 #include "chrome/common/chrome_features.h"
-#include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/os_crypt/sync/os_crypt.h"
 #include "components/prefs/pref_service.h"
@@ -35,11 +33,10 @@
 #include "services/network/public/cpp/features.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/mojom/network_context.mojom.h"
-#include "shell/browser/api/electron_api_safe_storage.h"
+#include "services/network/public/mojom/url_response_head.mojom.h"
 #include "shell/browser/browser.h"
 #include "shell/browser/electron_browser_client.h"
 #include "shell/common/application_info.h"
-#include "shell/common/electron_paths.h"
 #include "shell/common/options_switches.h"
 #include "url/gurl.h"
 
@@ -57,7 +54,7 @@ const char kNetworkServiceSandboxEnabled[] = "net.network_service_sandbox";
 }
 #endif  // BUILDFLAG(IS_WIN)
 
-// The global instance of the SystemNetworkContextmanager.
+// The global instance of the SystemNetworkContextManager.
 SystemNetworkContextManager* g_system_network_context_manager = nullptr;
 
 network::mojom::HttpAuthStaticParamsPtr CreateHttpAuthStaticParams() {
@@ -169,7 +166,7 @@ SystemNetworkContextManager::GetURLLoaderFactory() {
   network::mojom::URLLoaderFactoryParamsPtr params =
       network::mojom::URLLoaderFactoryParams::New();
   params->process_id = network::mojom::kBrowserProcessId;
-  params->is_corb_enabled = false;
+  params->is_orb_enabled = false;
   url_loader_factory_.reset();
   GetContext()->CreateURLLoaderFactory(
       url_loader_factory_.BindNewPipeAndPassReceiver(), std::move(params));
@@ -199,6 +196,7 @@ SystemNetworkContextManager::CreateDefaultNetworkContextParams() {
 void SystemNetworkContextManager::ConfigureDefaultNetworkContextParams(
     network::mojom::NetworkContextParams* network_context_params) {
   network_context_params->enable_brotli = true;
+  network_context_params->enable_zstd = true;
 
   network_context_params->enable_referrers = true;
 
@@ -262,15 +260,6 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
 
   net::SecureDnsMode default_secure_dns_mode = net::SecureDnsMode::kOff;
   std::string default_doh_templates;
-  if (base::FeatureList::IsEnabled(features::kDnsOverHttps)) {
-    if (features::kDnsOverHttpsFallbackParam.Get()) {
-      default_secure_dns_mode = net::SecureDnsMode::kAutomatic;
-    } else {
-      default_secure_dns_mode = net::SecureDnsMode::kSecure;
-    }
-    default_doh_templates = features::kDnsOverHttpsTemplatesParam.Get();
-  }
-
   net::DnsOverHttpsConfig doh_config;
   if (!default_doh_templates.empty() &&
       default_secure_dns_mode != net::SecureDnsMode::kOff) {
@@ -282,7 +271,7 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
   // Configure the stub resolver. This must be done after the system
   // NetworkContext is created, but before anything has the chance to use it.
   content::GetNetworkService()->ConfigureStubHostResolver(
-      base::FeatureList::IsEnabled(features::kAsyncDns),
+      base::FeatureList::IsEnabled(net::features::kAsyncDns),
       default_secure_dns_mode, doh_config, additional_dns_query_types_enabled);
 
   // The OSCrypt keys are process bound, so if network service is out of
@@ -291,10 +280,6 @@ void SystemNetworkContextManager::OnNetworkServiceCreated(
       electron::fuses::IsCookieEncryptionEnabled()) {
     network_service->SetEncryptionKey(OSCrypt::GetRawEncryptionKey());
   }
-
-#if DCHECK_IS_ON()
-  electron::safestorage::SetElectronCryptoReady(true);
-#endif
 }
 
 network::mojom::NetworkContextParamsPtr

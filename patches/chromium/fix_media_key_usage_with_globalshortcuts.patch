@@ -11,19 +11,19 @@ counter to the design of globalShortcuts, and so we need to instead
 use `ui::MediaKeysListener`.
 
 diff --git a/chrome/browser/extensions/global_shortcut_listener.cc b/chrome/browser/extensions/global_shortcut_listener.cc
-index fa5be7e4dbddd8333263c412b84a1d93b2d5046a..1b3c65359bff41a96ff27aef6e979ac7e6e8518d 100644
+index 7a5635aa2beec3f46fde571f68adf5ae6c20ea11..897d1dc7c5896edde32f0dc5a46143ed2e8ea03c 100644
 --- a/chrome/browser/extensions/global_shortcut_listener.cc
 +++ b/chrome/browser/extensions/global_shortcut_listener.cc
-@@ -7,6 +7,7 @@
- #include "base/check.h"
+@@ -14,6 +14,7 @@
  #include "base/notreached.h"
+ #include "build/config/linux/dbus/buildflags.h"
  #include "content/public/browser/browser_thread.h"
 +#include "content/public/browser/media_keys_listener_manager.h"
  #include "ui/base/accelerators/accelerator.h"
- 
- using content::BrowserThread;
-@@ -66,6 +67,22 @@ void GlobalShortcutListener::UnregisterAccelerator(
-     StopListening();
+ #include "ui/base/accelerators/command.h"
+ #include "ui/base/accelerators/global_accelerator_listener/global_accelerator_listener.h"
+@@ -91,6 +92,22 @@ void GlobalShortcutListener::UnregisterAccelerator(
+   RemoveAccelerator(accelerator);
  }
  
 +// static
@@ -43,14 +43,14 @@ index fa5be7e4dbddd8333263c412b84a1d93b2d5046a..1b3c65359bff41a96ff27aef6e979ac7
 +}
 +
  void GlobalShortcutListener::UnregisterAccelerators(Observer* observer) {
-   CHECK(BrowserThread::CurrentlyOn(BrowserThread::UI));
-   if (IsShortcutHandlingSuspended())
+   CHECK(global_accelerator_listener_);
+ 
 diff --git a/chrome/browser/extensions/global_shortcut_listener.h b/chrome/browser/extensions/global_shortcut_listener.h
-index f96af14cb915c8ab92b314ac15b6dffcdd6ec607..2556abe433493251ebd48d4aeddaa6d4f553208f 100644
+index ec203528129a3d13753d6ce477dd5796e80ddf71..2dd2403e0ae57dd8162fbcc8c8d3ebdd6e57c95c 100644
 --- a/chrome/browser/extensions/global_shortcut_listener.h
 +++ b/chrome/browser/extensions/global_shortcut_listener.h
-@@ -33,6 +33,8 @@ class GlobalShortcutListener {
- 
+@@ -41,6 +41,8 @@ class GlobalShortcutListener {
+   // The instance may be nullptr.
    static GlobalShortcutListener* GetInstance();
  
 +  static void SetShouldUseInternalMediaKeyHandling(bool should_use);
@@ -59,11 +59,11 @@ index f96af14cb915c8ab92b314ac15b6dffcdd6ec607..2556abe433493251ebd48d4aeddaa6d4
    // true if register successfully, or false if 1) the specificied |accelerator|
    // has been registered by another caller or other native applications, or
 diff --git a/content/browser/media/media_keys_listener_manager_impl.cc b/content/browser/media/media_keys_listener_manager_impl.cc
-index 169a009fd62d677955ac67df086dd658f902560c..134919f7ecedf2342139626977520b088f8b93d5 100644
+index 42e37564e585987d367921568f0f1d2b7507f953..9baf89efbade01e8b60c579255f10799914e144f 100644
 --- a/content/browser/media/media_keys_listener_manager_impl.cc
 +++ b/content/browser/media/media_keys_listener_manager_impl.cc
-@@ -56,7 +56,11 @@ bool MediaKeysListenerManagerImpl::StartWatchingMediaKey(
-                                CanActiveMediaSessionControllerReceiveEvents();
+@@ -87,7 +87,11 @@ bool MediaKeysListenerManagerImpl::StartWatchingMediaKey(
+       CanActiveMediaSessionControllerReceiveEvents();
  
    // Tell the underlying MediaKeysListener to listen for the key.
 -  if (should_start_watching && media_keys_listener_ &&
@@ -75,18 +75,11 @@ index 169a009fd62d677955ac67df086dd658f902560c..134919f7ecedf2342139626977520b08
        !media_keys_listener_->StartWatchingMediaKey(key_code)) {
      return false;
    }
-@@ -240,6 +244,7 @@ void MediaKeysListenerManagerImpl::StartListeningForMediaKeysIfNecessary() {
- #endif
- 
-   if (system_media_controls_) {
-+    // This is required for proper functioning of MediaMetadata.
-     system_media_controls_->AddObserver(this);
-     system_media_controls_notifier_ =
-         std::make_unique<SystemMediaControlsNotifier>(
-@@ -252,6 +257,19 @@ void MediaKeysListenerManagerImpl::StartListeningForMediaKeysIfNecessary() {
+@@ -361,6 +365,20 @@ void MediaKeysListenerManagerImpl::StartListeningForMediaKeysIfNecessary() {
+         this, ui::MediaKeysListener::Scope::kGlobal);
      DCHECK(media_keys_listener_);
    }
- 
++
 +#if BUILDFLAG(IS_MAC)
 +  // Chromium's implementation of SystemMediaControls falls
 +  // down into MPRemoteCommandCenter, which makes it such that an app will not

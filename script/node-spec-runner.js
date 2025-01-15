@@ -1,21 +1,24 @@
-const cp = require('child_process');
-const fs = require('fs');
-const path = require('path');
+const minimist = require('minimist');
 
-const args = require('minimist')(process.argv.slice(2), {
+const cp = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const utils = require('./lib/utils');
+const DISABLED_TESTS = require('./node-disabled-tests.json');
+
+const args = minimist(process.argv.slice(2), {
   boolean: ['default', 'validateDisabled'],
   string: ['jUnitDir']
 });
 
 const BASE = path.resolve(__dirname, '../..');
-const DISABLED_TESTS = require('./node-disabled-tests.json');
+
 const NODE_DIR = path.resolve(BASE, 'third_party', 'electron_node');
 const JUNIT_DIR = args.jUnitDir ? path.resolve(args.jUnitDir) : null;
 const TAP_FILE_NAME = 'test.tap';
 
-const utils = require('./lib/utils');
-
-if (!process.mainModule) {
+if (!require.main) {
   throw new Error('Must call the node spec runner directly');
 }
 

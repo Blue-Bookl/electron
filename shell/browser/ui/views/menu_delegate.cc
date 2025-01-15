@@ -10,6 +10,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "shell/browser/ui/views/menu_bar.h"
 #include "shell/browser/ui/views/menu_model_adapter.h"
+#include "ui/base/mojom/menu_source_type.mojom.h"
 #include "ui/views/controls/button/menu_button.h"
 #include "ui/views/controls/menu/menu_item_view.h"
 #include "ui/views/controls/menu/menu_runner.h"
@@ -23,25 +24,26 @@ MenuDelegate::~MenuDelegate() = default;
 
 void MenuDelegate::RunMenu(ElectronMenuModel* model,
                            views::Button* button,
-                           ui::MenuSourceType source_type) {
+                           ui::mojom::MenuSourceType source_type) {
   gfx::Point screen_loc;
   views::View::ConvertPointToScreen(button, &screen_loc);
   // Subtract 1 from the height to make the popup flush with the button border.
   gfx::Rect bounds(screen_loc.x(), screen_loc.y(), button->width(),
                    button->height() - 1);
 
-  if (source_type == ui::MENU_SOURCE_KEYBOARD) {
+  if (source_type == ui::mojom::MenuSourceType::kKeyboard) {
     hold_first_switch_ = true;
   }
 
   id_ = button->GetID();
   adapter_ = std::make_unique<MenuModelAdapter>(model);
 
-  auto* item = new views::MenuItemView(this);
-  static_cast<MenuModelAdapter*>(adapter_.get())->BuildMenu(item);
+  auto item = std::make_unique<views::MenuItemView>(this);
+  static_cast<MenuModelAdapter*>(adapter_.get())->BuildMenu(item.get());
 
   menu_runner_ = std::make_unique<views::MenuRunner>(
-      item, views::MenuRunner::CONTEXT_MENU | views::MenuRunner::HAS_MNEMONICS);
+      std::move(item),
+      views::MenuRunner::CONTEXT_MENU | views::MenuRunner::HAS_MNEMONICS);
   menu_runner_->RunMenuAt(
       button->GetWidget()->GetTopLevelWidget(),
       static_cast<views::MenuButton*>(button)->button_controller(), bounds,
@@ -77,7 +79,7 @@ const gfx::FontList* MenuDelegate::GetLabelFontList(int id) const {
   return adapter_->GetLabelFontList(id);
 }
 
-absl::optional<SkColor> MenuDelegate::GetLabelColor(int id) const {
+std::optional<SkColor> MenuDelegate::GetLabelColor(int id) const {
   return adapter_->GetLabelColor(id);
 }
 

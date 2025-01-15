@@ -74,11 +74,19 @@
 * `defaultEncoding` string (optional) - Defaults to `ISO-8859-1`.
 * `backgroundThrottling` boolean (optional) - Whether to throttle animations and timers
   when the page becomes background. This also affects the
-  [Page Visibility API](../browser-window.md#page-visibility). Defaults to `true`.
-* `offscreen` boolean (optional) - Whether to enable offscreen rendering for the browser
+  [Page Visibility API](../browser-window.md#page-visibility). When at least one
+  [webContents](../web-contents.md) displayed in a single
+  [browserWindow](../browser-window.md) has disabled `backgroundThrottling` then
+  frames will be drawn and swapped for the whole window and other
+  [webContents](../web-contents.md) displayed by it. Defaults to `true`.
+* `offscreen` Object | boolean (optional) - Whether to enable offscreen rendering for the browser
   window. Defaults to `false`. See the
   [offscreen rendering tutorial](../../tutorial/offscreen-rendering.md) for
   more details.
+  * `useSharedTexture` boolean (optional) _Experimental_ - Whether to use GPU shared texture for accelerated
+     paint event. Defaults to `false`. See the
+    [offscreen rendering tutorial](../../tutorial/offscreen-rendering.md) for
+    more details.
 * `contextIsolation` boolean (optional) - Whether to run Electron APIs and
   the specified `preload` script in a separate JavaScript context. Defaults
   to `true`. The context that the `preload` script runs in will only have
@@ -139,6 +147,7 @@
   contain the layout of the document—without requiring scrolling. Enabling
   this will cause the `preferred-size-changed` event to be emitted on the
   `WebContents` when the preferred size changes. Default is `false`.
+* `transparent` boolean (optional) - Whether to enable background transparency for the guest page. Default is `true`. **Note:** The guest page's text and background colors are derived from the [color scheme](https://developer.mozilla.org/en-US/docs/Web/CSS/color-scheme) of its root element. When transparency is enabled, the text color will still change accordingly but the background will remain transparent.
 
 [chrome-content-scripts]: https://developer.chrome.com/extensions/content_scripts#execution-environment
 [runtime-enabled-features]: https://source.chromium.org/chromium/chromium/src/+/main:third_party/blink/renderer/platform/runtime_enabled_features.json5

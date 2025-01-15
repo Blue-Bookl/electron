@@ -16,6 +16,8 @@ ln -s $buildtools_configs $buildtools/configs
 
 # Write the gclient config if it does not already exist
 if [ ! -f $gclient_root/.gclient ]; then
+  echo "Creating gclient config"
+
   echo "solutions = [
       { \"name\"        : \"src/electron\",
           \"url\"         : \"https://github.com/electron/electron\",
@@ -32,10 +34,11 @@ fi
 # Write the default buildtools config file if it does
 # not already exist
 if [ ! -f $buildtools/configs/evm.testing.json ]; then
+  echo "Creating build-tools testing config"
+
   write_config() {
     echo "
         {
-            \"goma\": \"$1\",
             \"root\": \"/workspaces/gclient\",
             \"remotes\": {
                 \"electron\": {
@@ -45,7 +48,7 @@ if [ ! -f $buildtools/configs/evm.testing.json ]; then
             \"gen\": {
                 \"args\": [
                     \"import(\\\"//electron/build/args/testing.gn\\\")\",
-                    \"import(\\\"/home/builduser/.electron_build_tools/third_party/goma.gn\\\")\"
+                    \"use_remoteexec = true\"
                 ],
                 \"out\": \"Testing\"
             },
@@ -53,24 +56,17 @@ if [ ! -f $buildtools/configs/evm.testing.json ]; then
                 \"CHROMIUM_BUILDTOOLS_PATH\": \"/workspaces/gclient/src/buildtools\",
                 \"GIT_CACHE_PATH\": \"/workspaces/gclient/.git-cache\"
             },
-            \"$schema\": \"file:///home/builduser/.electron_build_tools/evm-config.schema.json\"
+            \"\$schema\": \"file:///home/builduser/.electron_build_tools/evm-config.schema.json\",
+            \"configValidationLevel\": \"strict\",
+            \"reclient\": \"$1\",
+            \"preserveXcode\": 5
         }
     " >$buildtools/configs/evm.testing.json
   }
 
-  # Start out as cache only
-  write_config cache-only
+  write_config remote_exec
 
-  e use testing
-
-  # Attempt to auth to the goma service via codespaces tokens
-  # if it works we can use the goma cluster
-  export NOTGOMA_CODESPACES_TOKEN=$GITHUB_TOKEN
-  if e d goma_auth login; then
-    write_config cluster
-  fi
+  e use testing 
 else
-  # Even if the config file existed we still need to re-auth with the goma
-  # cluster
-  NOTGOMA_CODESPACES_TOKEN=$GITHUB_TOKEN e d goma_auth login || true
+  echo "build-tools testing config already exists"
 fi

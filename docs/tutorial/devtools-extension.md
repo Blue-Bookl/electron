@@ -33,10 +33,10 @@ Using the [React Developer Tools][react-devtools] as an example:
 1. Pass the location of the extension to the [`ses.loadExtension`][load-extension]
    API. For React Developer Tools `v4.9.0`, it looks something like:
 
-   ```javascript
+   ```js
    const { app, session } = require('electron')
-   const path = require('path')
-   const os = require('os')
+   const path = require('node:path')
+   const os = require('node:os')
 
    // on macOS
    const reactDevToolsPath = path.join(
@@ -78,7 +78,6 @@ The following Devtools extensions have been tested to work in Electron:
 * [React Developer Tools](https://chrome.google.com/webstore/detail/react-developer-tools/fmkadmapgofadopljbjfkapdkoienihi)
 * [Backbone Debugger](https://chrome.google.com/webstore/detail/backbone-debugger/bhljhndlimiafopmmhjlgfpnnchjjbhd)
 * [jQuery Debugger](https://chrome.google.com/webstore/detail/jquery-debugger/dbhhnnnpaeobfddmlalhnehgclcmjimi)
-* [AngularJS Batarang](https://chrome.google.com/webstore/detail/angularjs-batarang/ighdmehidhipcmcojjgiloacoafjmpfk)
 * [Vue.js devtools](https://chrome.google.com/webstore/detail/vuejs-devtools/nhdogjmejiglipccpnnnanhbledajbpd)
 * [Cerebral Debugger](https://cerebraljs.com/docs/introduction/devtools.html)
 * [Redux DevTools Extension](https://chrome.google.com/webstore/detail/redux-devtools/lmhkpmbekcpmknklioeibfkpmmfibljd)

@@ -7,7 +7,6 @@
 #include <vector>
 
 #include "base/functional/bind.h"
-#include "base/strings/sys_string_conversions.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -57,7 +56,6 @@ using InAppTransactionCallback = base::RepeatingCallback<void(
  */
 - (void)dealloc {
   [[SKPaymentQueue defaultQueue] removeTransactionObserver:self];
-  [super dealloc];
 }
 
 /**
@@ -99,7 +97,7 @@ using InAppTransactionCallback = base::RepeatingCallback<void(
  * @param paymentDiscount - The SKPaymentDiscount object to convert.
  */
 - (in_app_purchase::PaymentDiscount)skPaymentDiscountToStruct:
-    (SKPaymentDiscount*)paymentDiscount API_AVAILABLE(macosx(10.14.4)) {
+    (SKPaymentDiscount*)paymentDiscount {
   in_app_purchase::PaymentDiscount paymentDiscountStruct;
 
   paymentDiscountStruct.identifier = [paymentDiscount.identifier UTF8String];
@@ -133,11 +131,9 @@ using InAppTransactionCallback = base::RepeatingCallback<void(
         [payment.applicationUsername UTF8String];
   }
 
-  if (@available(macOS 10.14.4, *)) {
-    if (payment.paymentDiscount != nil) {
-      paymentStruct.paymentDiscount =
-          [self skPaymentDiscountToStruct:payment.paymentDiscount];
-    }
+  if (payment.paymentDiscount != nil) {
+    paymentStruct.paymentDiscount =
+        [self skPaymentDiscountToStruct:payment.paymentDiscount];
   }
 
   return paymentStruct;
@@ -228,7 +224,7 @@ TransactionObserver::TransactionObserver() {
 }
 
 TransactionObserver::~TransactionObserver() {
-  [observer_ release];
+  observer_ = nil;
 }
 
 }  // namespace in_app_purchase

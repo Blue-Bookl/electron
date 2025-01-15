@@ -51,10 +51,22 @@ using FullScreenTransitionState =
 
   // check occlusion binary flag
   if (window.occlusionState & NSWindowOcclusionStateVisible) {
-    // The app is visible
+    // There's a macOS bug where if a child window is minimized, and then both
+    // windows are restored via activation of the parent window, the child
+    // window is not properly deminiaturized. This causes traffic light bugs
+    // like the close and miniaturize buttons having no effect. We need to call
+    // deminiaturize on the child window to fix this. Unfortunately, this also
+    // hits ANOTHER bug where even after calling deminiaturize,
+    // windowDidDeminiaturize is not posted on the child window if it was
+    // incidentally restored by the parent, so we need to manually reset
+    // is_minimized_ here.
+    if (shell_->parent() && is_minimized_) {
+      shell_->Restore();
+      is_minimized_ = false;
+    }
+
     shell_->NotifyWindowShow();
   } else {
-    // The app is not visible
     shell_->NotifyWindowHide();
   }
 }
@@ -64,7 +76,7 @@ using FullScreenTransitionState =
 - (NSRect)windowWillUseStandardFrame:(NSWindow*)window
                         defaultFrame:(NSRect)frame {
   if (!shell_->zoom_to_page_width()) {
-    if (shell_->GetAspectRatio() > 0.0)
+    if (shell_->aspect_ratio() > 0.0)
       shell_->set_default_frame_for_zoom(frame);
     return frame;
   }
@@ -92,7 +104,7 @@ using FullScreenTransitionState =
   // Set the width. Don't touch y or height.
   frame.size.width = zoomed_width;
 
-  if (shell_->GetAspectRatio() > 0.0)
+  if (shell_->aspect_ratio() > 0.0)
     shell_->set_default_frame_for_zoom(frame);
 
   return frame;
@@ -127,13 +139,12 @@ using FullScreenTransitionState =
 
 - (NSSize)windowWillResize:(NSWindow*)sender toSize:(NSSize)frameSize {
   NSSize newSize = frameSize;
-  double aspectRatio = shell_->GetAspectRatio();
   NSWindow* window = shell_->GetNativeWindow().GetNativeNSWindow();
 
-  if (aspectRatio > 0.0) {
-    gfx::Size windowSize = shell_->GetSize();
-    gfx::Size contentSize = shell_->GetContentSize();
-    gfx::Size extraSize = shell_->GetAspectRatioExtraSize();
+  if (const double aspectRatio = shell_->aspect_ratio(); aspectRatio > 0.0) {
+    const gfx::Size windowSize = shell_->GetSize();
+    const gfx::Size contentSize = shell_->GetContentSize();
+    const gfx::Size extraSize = shell_->aspect_ratio_extra_size();
 
     double titleBarHeight = windowSize.height() - contentSize.height();
     double extraWidthPlusFrame =
@@ -244,11 +255,17 @@ using FullScreenTransitionState =
 
 - (void)windowDidMiniaturize:(NSNotification*)notification {
   [super windowDidMiniaturize:notification];
+  is_minimized_ = true;
+
+  shell_->set_wants_to_be_visible(false);
   shell_->NotifyWindowMinimize();
 }
 
 - (void)windowDidDeminiaturize:(NSNotification*)notification {
   [super windowDidDeminiaturize:notification];
+  is_minimized_ = false;
+
+  shell_->set_wants_to_be_visible(true);
   shell_->AttachChildren();
   shell_->SetWindowLevel(level_);
   shell_->NotifyWindowRestore();
@@ -294,6 +311,18 @@ using FullScreenTransitionState =
   shell_->HandlePendingFullscreenTransitions();
 }
 
+- (void)windowDidFailToEnterFullScreen:(NSWindow*)window {
+  shell_->set_fullscreen_transition_state(FullScreenTransitionState::kNone);
+
+  shell_->SetResizable(is_resizable_);
+  shell_->NotifyWindowDidFailToEnterFullScreen();
+
+  if (shell_->HandleDeferredClose())
+    return;
+
+  shell_->HandlePendingFullscreenTransitions();
+}
+
 - (void)windowWillExitFullScreen:(NSNotification*)notification {
   shell_->set_fullscreen_transition_state(FullScreenTransitionState::kExiting);
 
@@ -324,9 +353,9 @@ using FullScreenTransitionState =
     NSWindow* window = shell_->GetNativeWindow().GetNativeNSWindow();
     NSWindow* sheetParent = [window sheetParent];
     base::SingleThreadTaskRunner::GetCurrentDefault()->PostTask(
-        FROM_HERE, base::BindOnce(base::RetainBlock(^{
+        FROM_HERE, base::BindOnce(^{
           [sheetParent endSheet:window];
-        })));
+        }));
   }
 
   // Clears the delegate when window is going to be closed, since EL Capitan it

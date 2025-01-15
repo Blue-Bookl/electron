@@ -6,7 +6,7 @@ Process: [Main](../glossary.md#main-process)
 
 For example:
 
-```javascript
+```js
 const { powerSaveBlocker } = require('electron')
 
 const id = powerSaveBlocker.start('prevent-display-sleep')
@@ -48,6 +48,8 @@ is used.
 * `id` Integer - The power save blocker id returned by `powerSaveBlocker.start`.
 
 Stops the specified power save blocker.
+
+Returns `boolean` - Whether the specified `powerSaveBlocker` has been stopped.
 
 ### `powerSaveBlocker.isStarted(id)`
 

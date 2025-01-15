@@ -11,12 +11,9 @@
 #include "base/base_paths.h"
 #include "base/command_line.h"
 #include "base/containers/contains.h"
-#include "base/files/file_path.h"
-#include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "base/process/process_metrics.h"
 #include "content/public/renderer/render_frame.h"
-#include "electron/buildflags/buildflags.h"
 #include "shell/common/api/electron_bindings.h"
 #include "shell/common/application_info.h"
 #include "shell/common/gin_helper/dictionary.h"
@@ -27,6 +24,7 @@
 #include "shell/common/options_switches.h"
 #include "shell/renderer/electron_render_frame_observer.h"
 #include "third_party/blink/public/common/web_preferences/web_preferences.h"
+#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_document.h"
 #include "third_party/electron_node/src/node_binding.h"
@@ -35,8 +33,8 @@ namespace electron {
 
 namespace {
 
-const char kEmitProcessEventKey[] = "emit-process-event";
-const char kBindingCacheKey[] = "native-binding-cache";
+constexpr std::string_view kEmitProcessEventKey = "emit-process-event";
+constexpr std::string_view kBindingCacheKey = "native-binding-cache";
 
 v8::Local<v8::Object> GetBindingCache(v8::Isolate* isolate) {
   auto context = isolate->GetCurrentContext();
@@ -59,7 +57,7 @@ v8::Local<v8::Value> GetBinding(v8::Isolate* isolate,
   std::string binding_key = gin::V8ToString(isolate, key);
   gin_helper::Dictionary cache(isolate, GetBindingCache(isolate));
 
-  if (cache.Get(binding_key.c_str(), &exports)) {
+  if (cache.Get(binding_key, &exports)) {
     return exports;
   }
 
@@ -78,7 +76,7 @@ v8::Local<v8::Value> GetBinding(v8::Isolate* isolate,
   DCHECK_NE(mod->nm_context_register_func, nullptr);
   mod->nm_context_register_func(exports, v8::Null(isolate),
                                 isolate->GetCurrentContext(), mod->nm_priv);
-  cache.Set(binding_key.c_str(), exports);
+  cache.Set(binding_key, exports);
   return exports;
 }
 
@@ -88,7 +86,7 @@ v8::Local<v8::Value> CreatePreloadScript(v8::Isolate* isolate,
   auto maybe_script = v8::Script::Compile(context, source);
   v8::Local<v8::Script> script;
   if (!maybe_script.ToLocal(&script))
-    return v8::Local<v8::Value>();
+    return {};
   return script->Run(context).ToLocalChecked();
 }
 
@@ -97,7 +95,7 @@ double Uptime() {
       .InSecondsF();
 }
 
-void InvokeEmitProcessEvent(v8::Handle<v8::Context> context,
+void InvokeEmitProcessEvent(v8::Local<v8::Context> context,
                             const std::string& event_name) {
   auto* isolate = context->GetIsolate();
   // set by sandboxed_renderer/init.js
@@ -137,7 +135,7 @@ void ElectronSandboxedRendererClient::InitializeBindings(
   b.SetMethod("get", GetBinding);
   b.SetMethod("createPreloadScript", CreatePreloadScript);
 
-  gin_helper::Dictionary process = gin::Dictionary::CreateEmpty(isolate);
+  auto process = gin_helper::Dictionary::CreateEmpty(isolate);
   b.Set("process", process);
 
   ElectronBindings::BindProcess(isolate, &process, metrics_.get());
@@ -169,7 +167,7 @@ void ElectronSandboxedRendererClient::RunScriptsAtDocumentEnd(
 }
 
 void ElectronSandboxedRendererClient::DidCreateScriptContext(
-    v8::Handle<v8::Context> context,
+    v8::Local<v8::Context> context,
     content::RenderFrame* render_frame) {
   // Only allow preload for the main frame or
   // For devtools we still want to run the preload_bundle script
@@ -192,7 +190,7 @@ void ElectronSandboxedRendererClient::DidCreateScriptContext(
 
   util::CompileAndCall(
       isolate->GetCurrentContext(), "electron/js2c/sandbox_bundle",
-      &sandbox_preload_bundle_params, &sandbox_preload_bundle_args, nullptr);
+      &sandbox_preload_bundle_params, &sandbox_preload_bundle_args);
 
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(context);
@@ -200,15 +198,15 @@ void ElectronSandboxedRendererClient::DidCreateScriptContext(
 }
 
 void ElectronSandboxedRendererClient::WillReleaseScriptContext(
-    v8::Handle<v8::Context> context,
+    v8::Local<v8::Context> context,
     content::RenderFrame* render_frame) {
   if (injected_frames_.erase(render_frame) == 0)
     return;
 
   auto* isolate = context->GetIsolate();
-  gin_helper::MicrotasksScope microtasks_scope(
-      isolate, context->GetMicrotaskQueue(),
-      v8::MicrotasksScope::kDoNotRunMicrotasks);
+  gin_helper::MicrotasksScope microtasks_scope{
+      isolate, context->GetMicrotaskQueue(), false,
+      v8::MicrotasksScope::kDoNotRunMicrotasks};
   v8::HandleScope handle_scope(isolate);
   v8::Context::Scope context_scope(context);
   InvokeEmitProcessEvent(context, "exit");
@@ -220,13 +218,14 @@ void ElectronSandboxedRendererClient::EmitProcessEvent(
   if (!base::Contains(injected_frames_, render_frame))
     return;
 
-  auto* isolate = blink::MainThreadIsolate();
-  v8::HandleScope handle_scope(isolate);
-  v8::Local<v8::Context> context =
-      GetContext(render_frame->GetWebFrame(), isolate);
-  gin_helper::MicrotasksScope microtasks_scope(
-      isolate, context->GetMicrotaskQueue(),
-      v8::MicrotasksScope::kDoNotRunMicrotasks);
+  blink::WebLocalFrame* frame = render_frame->GetWebFrame();
+  v8::Isolate* isolate = frame->GetAgentGroupScheduler()->Isolate();
+  v8::HandleScope handle_scope{isolate};
+
+  v8::Local<v8::Context> context = GetContext(frame, isolate);
+  gin_helper::MicrotasksScope microtasks_scope{
+      isolate, context->GetMicrotaskQueue(), false,
+      v8::MicrotasksScope::kDoNotRunMicrotasks};
   v8::Context::Scope context_scope(context);
 
   InvokeEmitProcessEvent(context, event_name);

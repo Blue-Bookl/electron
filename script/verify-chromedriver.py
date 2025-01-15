@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 
-from __future__ import print_function
-
 import argparse
 import os
 import re
@@ -23,14 +21,15 @@ def main():
 
   chromedriver_path = os.path.join(
     args.source_root, args.build_dir, chromedriver_name[sys.platform])
-  proc = subprocess.Popen([chromedriver_path],
-                          stdout=subprocess.PIPE, universal_newlines=True)
-  try:
-    output = proc.stdout.readline()
-  except KeyboardInterrupt:
-    returncode = 0
-  finally:
-    proc.terminate()
+  with subprocess.Popen([chromedriver_path],
+                        stdout=subprocess.PIPE,
+                        universal_newlines=True) as proc:
+    try:
+      output = proc.stdout.readline()
+    except KeyboardInterrupt:
+      returncode = 0
+    finally:
+      proc.terminate()
 
   returncode = 0
   match = re.search(

@@ -4,8 +4,6 @@
 
 #include "shell/browser/fake_location_provider.h"
 
-#include "base/functional/callback.h"
-#include "base/time/time.h"
 #include "services/device/public/mojom/geoposition.mojom-shared.h"
 #include "services/device/public/mojom/geoposition.mojom.h"
 
@@ -20,14 +18,26 @@ FakeLocationProvider::FakeLocationProvider() {
 
 FakeLocationProvider::~FakeLocationProvider() = default;
 
+void FakeLocationProvider::FillDiagnostics(
+    device::mojom::GeolocationDiagnostics& diagnostics) {
+  diagnostics.provider_state = state_;
+}
+
 void FakeLocationProvider::SetUpdateCallback(
     const LocationProviderUpdateCallback& callback) {
   callback_ = callback;
 }
 
-void FakeLocationProvider::StartProvider(bool high_accuracy) {}
+void FakeLocationProvider::StartProvider(bool high_accuracy) {
+  state_ =
+      high_accuracy
+          ? device::mojom::GeolocationDiagnostics::ProviderState::kHighAccuracy
+          : device::mojom::GeolocationDiagnostics::ProviderState::kLowAccuracy;
+}
 
-void FakeLocationProvider::StopProvider() {}
+void FakeLocationProvider::StopProvider() {
+  state_ = device::mojom::GeolocationDiagnostics::ProviderState::kStopped;
+}
 
 const device::mojom::GeopositionResult* FakeLocationProvider::GetPosition() {
   return result_.get();

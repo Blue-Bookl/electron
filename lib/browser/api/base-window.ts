@@ -1,11 +1,13 @@
-import { EventEmitter } from 'events';
+import { TouchBar } from 'electron/main';
 import type { BaseWindow as TLWT } from 'electron/main';
-import * as deprecate from '@electron/internal/common/deprecate';
+
+import { EventEmitter } from 'events';
+
 const { BaseWindow } = process._linkedBinding('electron_browser_base_window') as { BaseWindow: typeof TLWT };
 
 Object.setPrototypeOf(BaseWindow.prototype, EventEmitter.prototype);
 
-BaseWindow.prototype._init = function () {
+BaseWindow.prototype._init = function (this: TLWT) {
   // Avoid recursive require.
   const { app } = require('electron');
 
@@ -16,23 +18,8 @@ BaseWindow.prototype._init = function () {
   }
 };
 
-// Deprecation.
-const setTrafficLightPositionDeprecated = deprecate.warnOnce('setTrafficLightPosition', 'setWindowButtonPosition');
-// Converting to any as the methods are defined under BrowserWindow in our docs.
-(BaseWindow as any).prototype.setTrafficLightPosition = function (pos: Electron.Point) {
-  setTrafficLightPositionDeprecated();
-  if (typeof pos === 'object' && pos.x === 0 && pos.y === 0) {
-    this.setWindowButtonPosition(null);
-  } else {
-    this.setWindowButtonPosition(pos);
-  }
-};
-
-const getTrafficLightPositionDeprecated = deprecate.warnOnce('getTrafficLightPosition', 'getWindowButtonPosition');
-(BaseWindow as any).prototype.getTrafficLightPosition = function () {
-  getTrafficLightPositionDeprecated();
-  const pos = this.getWindowButtonPosition();
-  return pos === null ? { x: 0, y: 0 } : pos;
+BaseWindow.prototype.setTouchBar = function (touchBar) {
+  (TouchBar as any)._setOnWindow(touchBar, this);
 };
 
 // Properties
@@ -123,7 +110,7 @@ Object.defineProperty(BaseWindow.prototype, 'movable', {
 });
 
 BaseWindow.getFocusedWindow = () => {
-  return BaseWindow.getAllWindows().find((win) => win.isFocused());
+  return BaseWindow.getAllWindows().find((win) => win.isFocused()) ?? null;
 };
 
 module.exports = BaseWindow;

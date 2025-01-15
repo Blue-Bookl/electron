@@ -8,8 +8,6 @@
 #include <map>
 #include <string>
 
-#include "build/build_config.h"
-
 namespace base {
 class Time;
 }
@@ -45,7 +43,7 @@ class Delegate {
                                   const std::string& update_url) {}
 
  protected:
-  virtual ~Delegate() {}
+  virtual ~Delegate() = default;
 };
 
 class AutoUpdater {
@@ -69,6 +67,9 @@ class AutoUpdater {
   static void SetFeedURL(gin::Arguments* args);
   static void CheckForUpdates();
   static void QuitAndInstall();
+
+  static bool IsVersionAllowedForUpdate(const std::string& current_version,
+                                        const std::string& target_version);
 
  private:
   static Delegate* delegate_;

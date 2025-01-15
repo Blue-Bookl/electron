@@ -7,16 +7,20 @@
 
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "base/values.h"
 #include "mojo/public/cpp/bindings/receiver.h"
 #include "mojo/public/cpp/bindings/remote.h"
-#include "mojo/public/cpp/system/data_pipe_producer.h"
 #include "services/network/public/cpp/resource_request.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/cpp/simple_url_loader_stream_consumer.h"
 #include "services/network/public/mojom/url_loader.mojom.h"
+
+namespace mojo {
+class DataPipeProducer;
+}
 
 namespace network {
 class SharedURLLoaderFactory;
@@ -58,7 +62,7 @@ class URLPipeLoader : public network::mojom::URLLoader,
   void OnWrite(base::OnceClosure resume, MojoResult result);
 
   // SimpleURLLoaderStreamConsumer:
-  void OnDataReceived(base::StringPiece string_piece,
+  void OnDataReceived(std::string_view string_view,
                       base::OnceClosure resume) override;
   void OnComplete(bool success) override;
   void OnRetry(base::OnceClosure start_retry) override;
@@ -68,7 +72,7 @@ class URLPipeLoader : public network::mojom::URLLoader,
       const std::vector<std::string>& removed_headers,
       const net::HttpRequestHeaders& modified_headers,
       const net::HttpRequestHeaders& modified_cors_exempt_headers,
-      const absl::optional<GURL>& new_url) override {}
+      const std::optional<GURL>& new_url) override {}
   void SetPriority(net::RequestPriority priority,
                    int32_t intra_priority_value) override {}
   void PauseReadingBodyFromNet() override {}

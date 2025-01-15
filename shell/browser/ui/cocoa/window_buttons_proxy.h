@@ -7,8 +7,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/mac/scoped_nsobject.h"
-#include "third_party/abseil-cpp/absl/types/optional.h"
+#include <optional>
+
 #include "ui/gfx/geometry/point.h"
 
 @class WindowButtonsProxy;
@@ -36,8 +36,8 @@
   // Track mouse moves above window buttons.
   BOOL show_on_hover_;
   BOOL mouse_inside_;
-  base::scoped_nsobject<NSTrackingArea> tracking_area_;
-  base::scoped_nsobject<ButtonsAreaHoverView> hover_view_;
+  NSTrackingArea* __strong tracking_area_;
+  ButtonsAreaHoverView* __strong hover_view_;
 }
 
 - (id)initWithWindow:(NSWindow*)window;
@@ -49,7 +49,7 @@
 - (void)setShowOnHover:(BOOL)yes;
 
 // Set left-top margin of the window buttons..
-- (void)setMargin:(const absl::optional<gfx::Point>&)margin;
+- (void)setMargin:(const std::optional<gfx::Point>&)margin;
 
 // Set height of button container
 - (void)setHeight:(const float)height;

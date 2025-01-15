@@ -1,14 +1,21 @@
 declare const BUILDFLAG: (flag: boolean) => boolean;
 
-declare const ENABLE_VIEWS_API: boolean;
-
 declare namespace NodeJS {
+  interface ModuleInternal extends NodeJS.Module {
+    new(id: string, parent?: NodeJS.Module | null): NodeJS.Module;
+    _load(request: string, parent?: NodeJS.Module | null, isMain?: boolean): any;
+    _resolveFilename(request: string, parent?: NodeJS.Module | null, isMain?: boolean, options?: { paths: string[] }): string;
+    _preloadModules(requests: string[]): void;
+    _nodeModulePaths(from: string): string[];
+    _extensions: Record<string, (module: NodeJS.Module, filename: string) => any>;
+    _cache: Record<string, NodeJS.Module>;
+    wrapper: [string, string];
+  }
+
   interface FeaturesBinding {
     isBuiltinSpellCheckerEnabled(): boolean;
-    isOffscreenRenderingEnabled(): boolean;
     isPDFViewerEnabled(): boolean;
     isFakeLocationProviderEnabled(): boolean;
-    isViewApiEnabled(): boolean;
     isPrintingEnabled(): boolean;
     isExtensionsEnabled(): boolean;
     isComponentBuild(): boolean;
@@ -18,7 +25,6 @@ declare namespace NodeJS {
     send(internal: boolean, channel: string, args: any[]): void;
     sendSync(internal: boolean, channel: string, args: any[]): any;
     sendToHost(channel: string, args: any[]): void;
-    sendTo(webContentsId: number, channel: string, args: any[]): void;
     invoke<T>(internal: boolean, channel: string, args: any[]): Promise<{ error: string, result: T }>;
     postMessage(channel: string, message: any, transferables: MessagePort[]): void;
   }
@@ -26,7 +32,6 @@ declare namespace NodeJS {
   interface V8UtilBinding {
     getHiddenValue<T>(obj: any, key: string): T;
     setHiddenValue<T>(obj: any, key: string, value: T): void;
-    deleteHiddenValue(obj: any, key: string): void;
     requestGarbageCollectionForTesting(): void;
     runUntilIdle(): void;
     triggerFatalErrorForTesting(): void;
@@ -47,7 +52,6 @@ declare namespace NodeJS {
     getVar(name: string): string | null;
     hasVar(name: string): boolean;
     setVar(name: string, value: string): boolean;
-    unSetVar(name: string): boolean;
   }
 
   type AsarFileInfo = {
@@ -63,9 +67,7 @@ declare namespace NodeJS {
   type AsarFileStat = {
     size: number;
     offset: number;
-    isFile: boolean;
-    isDirectory: boolean;
-    isLink: boolean;
+    type: number;
   }
 
   interface AsarArchive {
@@ -86,7 +88,6 @@ declare namespace NodeJS {
       asarPath: string;
       filePath: string;
     };
-    initAsarSupport(require: NodeJS.Require): void;
   }
 
   interface NetBinding {
@@ -97,6 +98,7 @@ declare namespace NodeJS {
     Net: any;
     net: any;
     createURLLoader(options: CreateURLLoaderOptions): URLLoader;
+    resolveHost(host: string, options?: Electron.ResolveHostOptions): Promise<Electron.ResolvedHost>;
   }
 
   interface NotificationBinding {
@@ -123,7 +125,8 @@ declare namespace NodeJS {
   interface WebFrameMainBinding {
     WebFrameMain: typeof Electron.WebFrameMain;
     fromId(processId: number, routingId: number): Electron.WebFrameMain;
-    fromIdOrNull(processId: number, routingId: number): Electron.WebFrameMain | null;
+    _fromIdIfExists(processId: number, routingId: number): Electron.WebFrameMain | null;
+    _fromFtnIdIfExists(frameTreeNodeId: number): Electron.WebFrameMain | null;
   }
 
   interface InternalWebPreferences {
@@ -205,20 +208,19 @@ declare namespace NodeJS {
     _linkedBinding(name: 'electron_common_environment'): EnvironmentBinding;
     _linkedBinding(name: 'electron_common_features'): FeaturesBinding;
     _linkedBinding(name: 'electron_common_native_image'): { nativeImage: typeof Electron.NativeImage };
+    _linkedBinding(name: 'electron_common_net'): NetBinding;
     _linkedBinding(name: 'electron_common_shell'): Electron.Shell;
     _linkedBinding(name: 'electron_common_v8_util'): V8UtilBinding;
     _linkedBinding(name: 'electron_browser_app'): { app: Electron.App, App: Function };
     _linkedBinding(name: 'electron_browser_auto_updater'): { autoUpdater: Electron.AutoUpdater };
-    _linkedBinding(name: 'electron_browser_browser_view'): { BrowserView: typeof Electron.BrowserView };
     _linkedBinding(name: 'electron_browser_crash_reporter'): CrashReporterBinding;
-    _linkedBinding(name: 'electron_browser_desktop_capturer'): { createDesktopCapturer(): ElectronInternal.DesktopCapturer; };
+    _linkedBinding(name: 'electron_browser_desktop_capturer'): { createDesktopCapturer(): ElectronInternal.DesktopCapturer; isDisplayMediaSystemPickerAvailable(): boolean; };
     _linkedBinding(name: 'electron_browser_event_emitter'): { setEventEmitterPrototype(prototype: Object): void; };
     _linkedBinding(name: 'electron_browser_global_shortcut'): { globalShortcut: Electron.GlobalShortcut };
     _linkedBinding(name: 'electron_browser_image_view'): { ImageView: any };
     _linkedBinding(name: 'electron_browser_in_app_purchase'): { inAppPurchase: Electron.InAppPurchase };
     _linkedBinding(name: 'electron_browser_message_port'): { createPair(): { port1: Electron.MessagePortMain, port2: Electron.MessagePortMain }; };
     _linkedBinding(name: 'electron_browser_native_theme'): { nativeTheme: Electron.NativeTheme };
-    _linkedBinding(name: 'electron_browser_net'): NetBinding;
     _linkedBinding(name: 'electron_browser_notification'): NotificationBinding;
     _linkedBinding(name: 'electron_browser_power_monitor'): PowerMonitorBinding;
     _linkedBinding(name: 'electron_browser_power_save_blocker'): { powerSaveBlocker: Electron.PowerSaveBlocker };
@@ -245,9 +247,12 @@ declare namespace NodeJS {
     // Additional properties
     _firstFileName?: string;
     _serviceStartupScript: string;
+    _getOrCreateArchive?: (path: string) => NodeJS.AsarArchive | null;
 
     helperExecPath: string;
     mainModule?: NodeJS.Module | undefined;
+
+    appCodeLoaded?: () => void;
   }
 }
 
@@ -289,6 +294,12 @@ declare interface Window {
   };
   WebView: typeof ElectronInternal.WebViewElement;
   trustedTypes: TrustedTypePolicyFactory;
+}
+
+// https://github.com/electron/electron/blob/main/docs/tutorial/message-ports.md#extension-close-event
+
+interface MessagePort {
+  onclose: () => void;
 }
 
 // https://w3c.github.io/webappsec-trusted-types/dist/spec/#trusted-types

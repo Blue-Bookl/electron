@@ -1,16 +1,17 @@
-import { app, ipcMain, session, webFrameMain } from 'electron/main';
-import type { BrowserWindowConstructorOptions, LoadURLOptions } from 'electron/main';
-
-import * as url from 'url';
-import * as path from 'path';
 import { openGuestWindow, makeWebPreferences, parseContentTypeFormat } from '@electron/internal/browser/guest-window-manager';
-import { parseFeatures } from '@electron/internal/browser/parse-features-string';
+import { IpcMainImpl } from '@electron/internal/browser/ipc-main-impl';
 import { ipcMainInternal } from '@electron/internal/browser/ipc-main-internal';
 import * as ipcMainUtils from '@electron/internal/browser/ipc-main-internal-utils';
 import { MessagePortMain } from '@electron/internal/browser/message-port-main';
-import { IPC_MESSAGES } from '@electron/internal/common/ipc-messages';
-import { IpcMainImpl } from '@electron/internal/browser/ipc-main-impl';
+import { parseFeatures } from '@electron/internal/browser/parse-features-string';
 import * as deprecate from '@electron/internal/common/deprecate';
+import { IPC_MESSAGES } from '@electron/internal/common/ipc-messages';
+
+import { app, ipcMain, session, webFrameMain, dialog } from 'electron/main';
+import type { BrowserWindowConstructorOptions, MessageBoxOptions } from 'electron/main';
+
+import * as path from 'path';
+import * as url from 'url';
 
 // session is not used here, the purpose is to make sure session is initialized
 // before the webContents module.
@@ -23,8 +24,6 @@ let nextId = 0;
 const getNextId = function () {
   return ++nextId;
 };
-
-type PostData = LoadURLOptions['postData']
 
 // Stock page sizes
 const PDFPageSizes: Record<string, ElectronInternal.MediaSize> = {
@@ -187,140 +186,67 @@ WebContents.prototype.executeJavaScriptInIsolatedWorld = async function (worldId
   return ipcMainUtils.invokeInWebContents(this, IPC_MESSAGES.RENDERER_WEB_FRAME_METHOD, 'executeJavaScriptInIsolatedWorld', worldId, code, !!hasUserGesture);
 };
 
+function checkType<T> (value: T, type: 'number' | 'boolean' | 'string' | 'object', name: string): T {
+  // eslint-disable-next-line valid-typeof
+  if (typeof value !== type) {
+    throw new TypeError(`${name} must be a ${type}`);
+  }
+
+  return value;
+}
+
+function parsePageSize (pageSize: string | ElectronInternal.PageSize) {
+  if (typeof pageSize === 'string') {
+    const format = paperFormats[pageSize.toLowerCase()];
+    if (!format) {
+      throw new Error(`Invalid pageSize ${pageSize}`);
+    }
+
+    return { paperWidth: format.width, paperHeight: format.height };
+  } else if (typeof pageSize === 'object') {
+    if (typeof pageSize.width !== 'number' || typeof pageSize.height !== 'number') {
+      throw new TypeError('width and height properties are required for pageSize');
+    }
+
+    return { paperWidth: pageSize.width, paperHeight: pageSize.height };
+  } else {
+    throw new TypeError('pageSize must be a string or an object');
+  }
+}
+
 // Translate the options of printToPDF.
 
 let pendingPromise: Promise<any> | undefined;
 WebContents.prototype.printToPDF = async function (options) {
-  const printSettings: Record<string, any> = {
+  const margins = checkType(options.margins ?? {}, 'object', 'margins');
+  const pageSize = parsePageSize(options.pageSize ?? 'letter');
+
+  const { top, bottom, left, right } = margins;
+  const validHeight = [top, bottom].every(u => u === undefined || u <= pageSize.paperHeight);
+  const validWidth = [left, right].every(u => u === undefined || u <= pageSize.paperWidth);
+
+  if (!validHeight || !validWidth) {
+    throw new Error('margins must be less than or equal to pageSize');
+  }
+
+  const printSettings = {
     requestID: getNextId(),
-    landscape: false,
-    displayHeaderFooter: false,
-    headerTemplate: '',
-    footerTemplate: '',
-    printBackground: false,
-    scale: 1.0,
-    paperWidth: 8.5,
-    paperHeight: 11.0,
-    marginTop: 0.4,
-    marginBottom: 0.4,
-    marginLeft: 0.4,
-    marginRight: 0.4,
-    pageRanges: '',
-    preferCSSPageSize: false
+    landscape: checkType(options.landscape ?? false, 'boolean', 'landscape'),
+    displayHeaderFooter: checkType(options.displayHeaderFooter ?? false, 'boolean', 'displayHeaderFooter'),
+    headerTemplate: checkType(options.headerTemplate ?? '', 'string', 'headerTemplate'),
+    footerTemplate: checkType(options.footerTemplate ?? '', 'string', 'footerTemplate'),
+    printBackground: checkType(options.printBackground ?? false, 'boolean', 'printBackground'),
+    scale: checkType(options.scale ?? 1.0, 'number', 'scale'),
+    marginTop: checkType(margins.top ?? 0.4, 'number', 'margins.top'),
+    marginBottom: checkType(margins.bottom ?? 0.4, 'number', 'margins.bottom'),
+    marginLeft: checkType(margins.left ?? 0.4, 'number', 'margins.left'),
+    marginRight: checkType(margins.right ?? 0.4, 'number', 'margins.right'),
+    pageRanges: checkType(options.pageRanges ?? '', 'string', 'pageRanges'),
+    preferCSSPageSize: checkType(options.preferCSSPageSize ?? false, 'boolean', 'preferCSSPageSize'),
+    generateTaggedPDF: checkType(options.generateTaggedPDF ?? false, 'boolean', 'generateTaggedPDF'),
+    generateDocumentOutline: checkType(options.generateDocumentOutline ?? false, 'boolean', 'generateDocumentOutline'),
+    ...pageSize
   };
-
-  if (options.landscape !== undefined) {
-    if (typeof options.landscape !== 'boolean') {
-      return Promise.reject(new Error('landscape must be a Boolean'));
-    }
-    printSettings.landscape = options.landscape;
-  }
-
-  if (options.displayHeaderFooter !== undefined) {
-    if (typeof options.displayHeaderFooter !== 'boolean') {
-      return Promise.reject(new Error('displayHeaderFooter must be a Boolean'));
-    }
-    printSettings.displayHeaderFooter = options.displayHeaderFooter;
-  }
-
-  if (options.printBackground !== undefined) {
-    if (typeof options.printBackground !== 'boolean') {
-      return Promise.reject(new Error('printBackground must be a Boolean'));
-    }
-    printSettings.shouldPrintBackgrounds = options.printBackground;
-  }
-
-  if (options.scale !== undefined) {
-    if (typeof options.scale !== 'number') {
-      return Promise.reject(new Error('scale must be a Number'));
-    }
-    printSettings.scale = options.scale;
-  }
-
-  const { pageSize } = options;
-  if (pageSize !== undefined) {
-    if (typeof pageSize === 'string') {
-      const format = paperFormats[pageSize.toLowerCase()];
-      if (!format) {
-        return Promise.reject(new Error(`Invalid pageSize ${pageSize}`));
-      }
-
-      printSettings.paperWidth = format.width;
-      printSettings.paperHeight = format.height;
-    } else if (typeof options.pageSize === 'object') {
-      if (!pageSize.height || !pageSize.width) {
-        return Promise.reject(new Error('height and width properties are required for pageSize'));
-      }
-
-      printSettings.paperWidth = pageSize.width;
-      printSettings.paperHeight = pageSize.height;
-    } else {
-      return Promise.reject(new Error('pageSize must be a String or Object'));
-    }
-  }
-
-  const { margins } = options;
-  if (margins !== undefined) {
-    if (typeof margins !== 'object') {
-      return Promise.reject(new Error('margins must be an Object'));
-    }
-
-    if (margins.top !== undefined) {
-      if (typeof margins.top !== 'number') {
-        return Promise.reject(new Error('margins.top must be a Number'));
-      }
-      printSettings.marginTop = margins.top;
-    }
-
-    if (margins.bottom !== undefined) {
-      if (typeof margins.bottom !== 'number') {
-        return Promise.reject(new Error('margins.bottom must be a Number'));
-      }
-      printSettings.marginBottom = margins.bottom;
-    }
-
-    if (margins.left !== undefined) {
-      if (typeof margins.left !== 'number') {
-        return Promise.reject(new Error('margins.left must be a Number'));
-      }
-      printSettings.marginLeft = margins.left;
-    }
-
-    if (margins.right !== undefined) {
-      if (typeof margins.right !== 'number') {
-        return Promise.reject(new Error('margins.right must be a Number'));
-      }
-      printSettings.marginRight = margins.right;
-    }
-  }
-
-  if (options.pageRanges !== undefined) {
-    if (typeof options.pageRanges !== 'string') {
-      return Promise.reject(new Error('pageRanges must be a String'));
-    }
-    printSettings.pageRanges = options.pageRanges;
-  }
-
-  if (options.headerTemplate !== undefined) {
-    if (typeof options.headerTemplate !== 'string') {
-      return Promise.reject(new Error('headerTemplate must be a String'));
-    }
-    printSettings.headerTemplate = options.headerTemplate;
-  }
-
-  if (options.footerTemplate !== undefined) {
-    if (typeof options.footerTemplate !== 'string') {
-      return Promise.reject(new Error('footerTemplate must be a String'));
-    }
-    printSettings.footerTemplate = options.footerTemplate;
-  }
-
-  if (options.preferCSSPageSize !== undefined) {
-    if (typeof options.preferCSSPageSize !== 'boolean') {
-      return Promise.reject(new Error('footerTemplate must be a String'));
-    }
-    printSettings.preferCSSPageSize = options.preferCSSPageSize;
-  }
 
   if (this._printToPDF) {
     if (pendingPromise) {
@@ -330,50 +256,51 @@ WebContents.prototype.printToPDF = async function (options) {
     }
     return pendingPromise;
   } else {
-    const error = new Error('Printing feature is disabled');
-    return Promise.reject(error);
+    throw new Error('Printing feature is disabled');
   }
 };
 
 // TODO(codebytere): deduplicate argument sanitization by moving rest of
 // print param logic into new file shared between printToPDF and print
-WebContents.prototype.print = function (options: ElectronInternal.WebContentsPrintOptions, callback) {
-  if (typeof options === 'object') {
-    const pageSize = options.pageSize ?? 'A4';
-    if (typeof pageSize === 'object') {
-      if (!pageSize.height || !pageSize.width) {
-        throw new Error('height and width properties are required for pageSize');
-      }
+WebContents.prototype.print = function (options: ElectronInternal.WebContentsPrintOptions = {}, callback) {
+  if (typeof options !== 'object' || options == null) {
+    throw new TypeError('webContents.print(): Invalid print settings specified.');
+  }
 
-      // Dimensions in Microns - 1 meter = 10^6 microns
-      const height = Math.ceil(pageSize.height);
-      const width = Math.ceil(pageSize.width);
-      if (!isValidCustomPageSize(width, height)) {
-        throw new Error('height and width properties must be minimum 352 microns.');
-      }
-
-      options.mediaSize = {
-        name: 'CUSTOM',
-        custom_display_name: 'Custom',
-        height_microns: height,
-        width_microns: width,
-        imageable_area_left_microns: 0,
-        imageable_area_bottom_microns: 0,
-        imageable_area_right_microns: width,
-        imageable_area_top_microns: height
-      };
-    } else if (typeof pageSize === 'string' && PDFPageSizes[pageSize]) {
-      const mediaSize = PDFPageSizes[pageSize];
-      options.mediaSize = {
-        ...mediaSize,
-        imageable_area_left_microns: 0,
-        imageable_area_bottom_microns: 0,
-        imageable_area_right_microns: mediaSize.width_microns,
-        imageable_area_top_microns: mediaSize.height_microns
-      };
-    } else {
-      throw new Error(`Unsupported pageSize: ${pageSize}`);
+  const pageSize = options.pageSize ?? 'A4';
+  if (typeof pageSize === 'object') {
+    if (!pageSize.height || !pageSize.width) {
+      throw new Error('height and width properties are required for pageSize');
     }
+
+    // Dimensions in Microns - 1 meter = 10^6 microns
+    const height = Math.ceil(pageSize.height);
+    const width = Math.ceil(pageSize.width);
+    if (!isValidCustomPageSize(width, height)) {
+      throw new RangeError('height and width properties must be minimum 352 microns.');
+    }
+
+    options.mediaSize = {
+      name: 'CUSTOM',
+      custom_display_name: 'Custom',
+      height_microns: height,
+      width_microns: width,
+      imageable_area_left_microns: 0,
+      imageable_area_bottom_microns: 0,
+      imageable_area_right_microns: width,
+      imageable_area_top_microns: height
+    };
+  } else if (typeof pageSize === 'string' && PDFPageSizes[pageSize]) {
+    const mediaSize = PDFPageSizes[pageSize];
+    options.mediaSize = {
+      ...mediaSize,
+      imageable_area_left_microns: 0,
+      imageable_area_bottom_microns: 0,
+      imageable_area_right_microns: mediaSize.width_microns,
+      imageable_area_top_microns: mediaSize.height_microns
+    };
+  } else {
+    throw new Error(`Unsupported pageSize: ${pageSize}`);
   }
 
   if (this._print) {
@@ -384,17 +311,6 @@ WebContents.prototype.print = function (options: ElectronInternal.WebContentsPri
     }
   } else {
     console.error('Error: Printing feature is disabled.');
-  }
-};
-
-WebContents.prototype.getPrinters = function () {
-  // TODO(nornagon): this API has nothing to do with WebContents and should be
-  // moved.
-  if (printing.getPrinterList) {
-    return printing.getPrinterList();
-  } else {
-    console.error('Error: Printing feature is disabled.');
-    return [];
   }
 };
 
@@ -411,7 +327,7 @@ WebContents.prototype.getPrintersAsync = async function () {
 
 WebContents.prototype.loadFile = function (filePath, options = {}) {
   if (typeof filePath !== 'string') {
-    throw new Error('Must pass filePath as a string');
+    throw new TypeError('Must pass filePath as a string');
   }
   const { query, search, hash } = options;
 
@@ -425,28 +341,31 @@ WebContents.prototype.loadFile = function (filePath, options = {}) {
   }));
 };
 
+type LoadError = { errorCode: number, errorDescription: string, url: string };
+
 WebContents.prototype.loadURL = function (url, options) {
   const p = new Promise<void>((resolve, reject) => {
     const resolveAndCleanup = () => {
       removeListeners();
       resolve();
     };
-    const rejectAndCleanup = (errorCode: number, errorDescription: string, url: string) => {
+    let error: LoadError | undefined;
+    const rejectAndCleanup = ({ errorCode, errorDescription, url }: LoadError) => {
       const err = new Error(`${errorDescription} (${errorCode}) loading '${typeof url === 'string' ? url.substr(0, 2048) : url}'`);
       Object.assign(err, { errno: errorCode, code: errorDescription, url });
       removeListeners();
       reject(err);
     };
     const finishListener = () => {
-      resolveAndCleanup();
-    };
-    const failListener = (event: Electron.Event, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => {
-      if (isMainFrame) {
-        rejectAndCleanup(errorCode, errorDescription, validatedURL);
+      if (error) {
+        rejectAndCleanup(error);
+      } else {
+        resolveAndCleanup();
       }
     };
 
     let navigationStarted = false;
+    let browserInitiatedInPageNavigation = false;
     const navigationListener = (event: Electron.Event, url: string, isSameDocument: boolean, isMainFrame: boolean) => {
       if (isMainFrame) {
         if (navigationStarted && !isSameDocument) {
@@ -459,9 +378,18 @@ WebContents.prototype.loadURL = function (url, options) {
           // considered navigation events but are triggered with isSameDocument.
           // We can ignore these to allow virtual routing on page load as long
           // as the routing does not leave the document
-          return rejectAndCleanup(-3, 'ERR_ABORTED', url);
+          return rejectAndCleanup({ errorCode: -3, errorDescription: 'ERR_ABORTED', url });
         }
+        browserInitiatedInPageNavigation = navigationStarted && isSameDocument;
         navigationStarted = true;
+      }
+    };
+    const failListener = (event: Electron.Event, errorCode: number, errorDescription: string, validatedURL: string, isMainFrame: boolean) => {
+      if (!error && isMainFrame) {
+        error = { errorCode, errorDescription, url: validatedURL };
+      }
+      if (!navigationStarted && isMainFrame) {
+        finishListener();
       }
     };
     const stopLoadingListener = () => {
@@ -473,19 +401,27 @@ WebContents.prototype.loadURL = function (url, options) {
       // TODO(jeremy): enumerate all the cases in which this can happen. If
       // the only one is with a bad scheme, perhaps ERR_INVALID_ARGUMENT
       // would be more appropriate.
-      rejectAndCleanup(-2, 'ERR_FAILED', url);
+      if (!error) {
+        error = { errorCode: -2, errorDescription: 'ERR_FAILED', url };
+      }
+      finishListener();
+    };
+    const finishListenerWhenUserInitiatedNavigation = () => {
+      if (!browserInitiatedInPageNavigation) {
+        finishListener();
+      }
     };
     const removeListeners = () => {
       this.removeListener('did-finish-load', finishListener);
       this.removeListener('did-fail-load', failListener);
-      this.removeListener('did-navigate-in-page', finishListener);
+      this.removeListener('did-navigate-in-page', finishListenerWhenUserInitiatedNavigation);
       this.removeListener('did-start-navigation', navigationListener);
       this.removeListener('did-stop-loading', stopLoadingListener);
       this.removeListener('destroyed', stopLoadingListener);
     };
     this.on('did-finish-load', finishListener);
     this.on('did-fail-load', failListener);
-    this.on('did-navigate-in-page', finishListener);
+    this.on('did-navigate-in-page', finishListenerWhenUserInitiatedNavigation);
     this.on('did-start-navigation', navigationListener);
     this.on('did-stop-loading', stopLoadingListener);
     this.on('destroyed', stopLoadingListener);
@@ -496,14 +432,15 @@ WebContents.prototype.loadURL = function (url, options) {
   return p;
 };
 
-WebContents.prototype.setWindowOpenHandler = function (handler: (details: Electron.HandlerDetails) => ({action: 'deny'} | {action: 'allow', overrideBrowserWindowOptions?: BrowserWindowConstructorOptions, outlivesOpener?: boolean})) {
+WebContents.prototype.setWindowOpenHandler = function (handler: (details: Electron.HandlerDetails) => Electron.WindowOpenHandlerResponse) {
   this._windowOpenHandler = handler;
 };
 
-WebContents.prototype._callWindowOpenHandler = function (event: Electron.Event, details: Electron.HandlerDetails): {browserWindowConstructorOptions: BrowserWindowConstructorOptions | null, outlivesOpener: boolean} {
+WebContents.prototype._callWindowOpenHandler = function (event: Electron.Event, details: Electron.HandlerDetails): {browserWindowConstructorOptions: BrowserWindowConstructorOptions | null, outlivesOpener: boolean, createWindow?: Electron.CreateWindowFunction} {
   const defaultResponse = {
     browserWindowConstructorOptions: null,
-    outlivesOpener: false
+    outlivesOpener: false,
+    createWindow: undefined
   };
   if (!this._windowOpenHandler) {
     return defaultResponse;
@@ -529,7 +466,8 @@ WebContents.prototype._callWindowOpenHandler = function (event: Electron.Event, 
   } else if (response.action === 'allow') {
     return {
       browserWindowConstructorOptions: typeof response.overrideBrowserWindowOptions === 'object' ? response.overrideBrowserWindowOptions : null,
-      outlivesOpener: typeof response.outlivesOpener === 'boolean' ? response.outlivesOpener : false
+      outlivesOpener: typeof response.outlivesOpener === 'boolean' ? response.outlivesOpener : false,
+      createWindow: typeof response.createWindow === 'function' ? response.createWindow : undefined
     };
   } else {
     event.preventDefault();
@@ -547,10 +485,6 @@ const addReplyToEvent = (event: Electron.IpcMainEvent) => {
 
 const addSenderToEvent = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent, sender: Electron.WebContents) => {
   event.sender = sender;
-  const { processId, frameId } = event;
-  Object.defineProperty(event, 'senderFrame', {
-    get: () => webFrameMain.fromId(processId, frameId)
-  });
 };
 
 const addReturnValueToEvent = (event: Electron.IpcMainEvent) => {
@@ -560,17 +494,62 @@ const addReturnValueToEvent = (event: Electron.IpcMainEvent) => {
   });
 };
 
-const getWebFrameForEvent = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent) => {
-  if (!event.processId || !event.frameId) return null;
-  return webFrameMainBinding.fromIdOrNull(event.processId, event.frameId);
-};
-
 const commandLine = process._linkedBinding('electron_common_command_line');
 const environment = process._linkedBinding('electron_common_environment');
 
 const loggingEnabled = () => {
   return environment.hasVar('ELECTRON_ENABLE_LOGGING') || commandLine.hasSwitch('enable-logging');
 };
+// Deprecation warnings for navigation related APIs.
+const canGoBackDeprecated = deprecate.warnOnce('webContents.canGoBack', 'webContents.navigationHistory.canGoBack');
+WebContents.prototype.canGoBack = function () {
+  canGoBackDeprecated();
+  return this._canGoBack();
+};
+
+const canGoForwardDeprecated = deprecate.warnOnce('webContents.canGoForward', 'webContents.navigationHistory.canGoForward');
+WebContents.prototype.canGoForward = function () {
+  canGoForwardDeprecated();
+  return this._canGoForward();
+};
+
+const canGoToOffsetDeprecated = deprecate.warnOnce('webContents.canGoToOffset', 'webContents.navigationHistory.canGoToOffset');
+WebContents.prototype.canGoToOffset = function (index: number) {
+  canGoToOffsetDeprecated();
+  return this._canGoToOffset(index);
+};
+
+const clearHistoryDeprecated = deprecate.warnOnce('webContents.clearHistory', 'webContents.navigationHistory.clear');
+WebContents.prototype.clearHistory = function () {
+  clearHistoryDeprecated();
+  return this._clearHistory();
+};
+
+const goBackDeprecated = deprecate.warnOnce('webContents.goBack', 'webContents.navigationHistory.goBack');
+WebContents.prototype.goBack = function () {
+  goBackDeprecated();
+  return this._goBack();
+};
+
+const goForwardDeprecated = deprecate.warnOnce('webContents.goForward', 'webContents.navigationHistory.goForward');
+WebContents.prototype.goForward = function () {
+  goForwardDeprecated();
+  return this._goForward();
+};
+
+const goToIndexDeprecated = deprecate.warnOnce('webContents.goToIndex', 'webContents.navigationHistory.goToIndex');
+WebContents.prototype.goToIndex = function (index: number) {
+  goToIndexDeprecated();
+  return this._goToIndex(index);
+};
+
+const goToOffsetDeprecated = deprecate.warnOnce('webContents.goToOffset', 'webContents.navigationHistory.goToOffset');
+WebContents.prototype.goToOffset = function (index: number) {
+  goToOffsetDeprecated();
+  return this._goToOffset(index);
+};
+
+const consoleMessageDeprecated = deprecate.warnOnceMessage('\'console-message\' arguments are deprecated and will be removed. Please use Event<WebContentsConsoleMessageEventParams> object instead.');
 
 // Add JavaScript wrappers for WebContents class.
 WebContents.prototype._init = function () {
@@ -594,31 +573,73 @@ WebContents.prototype._init = function () {
     enumerable: true
   });
 
+  /**
+   * Cached IPC emitters sorted by dispatch priority.
+   * Caching is used to avoid frequent array allocations.
+   *
+   * 0: WebFrameMain ipc
+   * 1: WebContents ipc
+   * 2: ipcMain
+   */
+  const cachedIpcEmitters: (ElectronInternal.IpcMainInternal | undefined)[] = [undefined, ipc, ipcMain];
+
+  // Get list of relevant IPC emitters for dispatch.
+  const getIpcEmittersForEvent = (event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent): (ElectronInternal.IpcMainInternal | undefined)[] => {
+    // Lookup by FrameTreeNode ID to ensure IPCs received after a frame swap are
+    // always received. This occurs when a RenderFrame sends an IPC while it's
+    // unloading and its internal state is pending deletion.
+    const { frameTreeNodeId } = event;
+    const webFrameByFtn = frameTreeNodeId ? webFrameMainBinding._fromFtnIdIfExists(frameTreeNodeId) : undefined;
+    cachedIpcEmitters[0] = webFrameByFtn?.ipc;
+
+    return cachedIpcEmitters;
+  };
+
+  // Add navigationHistory property which handles session history,
+  // maintaining a list of navigation entries for backward and forward navigation.
+  Object.defineProperty(this, 'navigationHistory', {
+    value: {
+      canGoBack: this._canGoBack.bind(this),
+      canGoForward: this._canGoForward.bind(this),
+      canGoToOffset: this._canGoToOffset.bind(this),
+      clear: this._clearHistory.bind(this),
+      goBack: this._goBack.bind(this),
+      goForward: this._goForward.bind(this),
+      goToIndex: this._goToIndex.bind(this),
+      goToOffset: this._goToOffset.bind(this),
+      getActiveIndex: this._getActiveIndex.bind(this),
+      length: this._historyLength.bind(this),
+      getEntryAtIndex: this._getNavigationEntryAtIndex.bind(this),
+      removeEntryAtIndex: this._removeNavigationEntryAtIndex.bind(this),
+      getAllEntries: this._getHistory.bind(this)
+    },
+    writable: false,
+    enumerable: true
+  });
+
   // Dispatch IPC messages to the ipc module.
-  this.on('-ipc-message' as any, function (this: Electron.WebContents, event: Electron.IpcMainEvent, internal: boolean, channel: string, args: any[]) {
+  this.on('-ipc-message', function (this: Electron.WebContents, event, internal, channel, args) {
     addSenderToEvent(event, this);
     if (internal) {
       ipcMainInternal.emit(channel, event, ...args);
     } else {
       addReplyToEvent(event);
       this.emit('ipc-message', event, channel, ...args);
-      const maybeWebFrame = getWebFrameForEvent(event);
-      maybeWebFrame && maybeWebFrame.ipc.emit(channel, event, ...args);
-      ipc.emit(channel, event, ...args);
-      ipcMain.emit(channel, event, ...args);
+      for (const ipcEmitter of getIpcEmittersForEvent(event)) {
+        ipcEmitter?.emit(channel, event, ...args);
+      }
     }
   });
 
-  this.on('-ipc-invoke' as any, async function (this: Electron.WebContents, event: Electron.IpcMainInvokeEvent, internal: boolean, channel: string, args: any[]) {
+  this.on('-ipc-invoke', async function (this: Electron.WebContents, event, internal, channel, args) {
     addSenderToEvent(event, this);
     const replyWithResult = (result: any) => event._replyChannel.sendReply({ result });
     const replyWithError = (error: Error) => {
       console.error(`Error occurred in handler for '${channel}':`, error);
       event._replyChannel.sendReply({ error: error.toString() });
     };
-    const maybeWebFrame = getWebFrameForEvent(event);
-    const targets: (ElectronInternal.IpcMainInternal| undefined)[] = internal ? [ipcMainInternal] : [maybeWebFrame?.ipc, ipc, ipcMain];
-    const target = targets.find(target => target && (target as any)._invokeHandlers.has(channel));
+    const targets: (ElectronInternal.IpcMainInternal | undefined)[] = internal ? [ipcMainInternal] : getIpcEmittersForEvent(event);
+    const target = targets.find(target => (target as any)?._invokeHandlers.has(channel));
     if (target) {
       const handler = (target as any)._invokeHandlers.get(channel);
       try {
@@ -631,35 +652,34 @@ WebContents.prototype._init = function () {
     }
   });
 
-  this.on('-ipc-message-sync' as any, function (this: Electron.WebContents, event: Electron.IpcMainEvent, internal: boolean, channel: string, args: any[]) {
+  this.on('-ipc-message-sync', function (this: Electron.WebContents, event, internal, channel, args) {
     addSenderToEvent(event, this);
     addReturnValueToEvent(event);
     if (internal) {
       ipcMainInternal.emit(channel, event, ...args);
     } else {
       addReplyToEvent(event);
-      const maybeWebFrame = getWebFrameForEvent(event);
-      if (this.listenerCount('ipc-message-sync') === 0 && ipc.listenerCount(channel) === 0 && ipcMain.listenerCount(channel) === 0 && (!maybeWebFrame || maybeWebFrame.ipc.listenerCount(channel) === 0)) {
+      const ipcEmitters = getIpcEmittersForEvent(event);
+      if (
+        this.listenerCount('ipc-message-sync') === 0 &&
+        ipcEmitters.every(emitter => !emitter || emitter.listenerCount(channel) === 0)
+      ) {
         console.warn(`WebContents #${this.id} called ipcRenderer.sendSync() with '${channel}' channel without listeners.`);
       }
       this.emit('ipc-message-sync', event, channel, ...args);
-      maybeWebFrame && maybeWebFrame.ipc.emit(channel, event, ...args);
-      ipc.emit(channel, event, ...args);
-      ipcMain.emit(channel, event, ...args);
+      for (const ipcEmitter of ipcEmitters) {
+        ipcEmitter?.emit(channel, event, ...args);
+      }
     }
   });
 
-  this.on('-ipc-ports' as any, function (this: Electron.WebContents, event: Electron.IpcMainEvent, internal: boolean, channel: string, message: any, ports: any[]) {
+  this.on('-ipc-ports', function (this: Electron.WebContents, event: Electron.IpcMainEvent, internal: boolean, channel: string, message: any, ports: any[]) {
     addSenderToEvent(event, this);
     event.ports = ports.map(p => new MessagePortMain(p));
-    const maybeWebFrame = getWebFrameForEvent(event);
-    maybeWebFrame && maybeWebFrame.ipc.emit(channel, event, message);
-    ipc.emit(channel, event, message);
-    ipcMain.emit(channel, event, message);
-  });
-
-  this.on('crashed', (event, ...args) => {
-    app.emit('renderer-process-crashed', event, this, ...args);
+    const ipcEmitters = getIpcEmittersForEvent(event);
+    for (const ipcEmitter of ipcEmitters) {
+      ipcEmitter?.emit(channel, event, message);
+    }
   });
 
   this.on('render-process-gone', (event, details) => {
@@ -671,6 +691,16 @@ WebContents.prototype._init = function () {
     }
   });
 
+  this.on('-before-unload-fired', function (this: Electron.WebContents, event, proceed) {
+    const type = this.getType();
+    // These are the "interactive" types, i.e. ones a user might be looking at.
+    // All other types should ignore the "proceed" signal and unload
+    // regardless.
+    if (type === 'window' || type === 'offscreen' || type === 'browserView') {
+      if (!proceed) { return event.preventDefault(); }
+    }
+  });
+
   // The devtools requests the webContents to reload.
   this.on('devtools-reload-page', function (this: Electron.WebContents) {
     this.reload();
@@ -678,12 +708,13 @@ WebContents.prototype._init = function () {
 
   if (this.getType() !== 'remote') {
     // Make new windows requested by links behave like "window.open".
-    this.on('-new-window' as any, (event: Electron.Event, url: string, frameName: string, disposition: Electron.HandlerDetails['disposition'],
-      rawFeatures: string, referrer: Electron.Referrer, postData: PostData) => {
-      const postBody = postData ? {
-        data: postData,
-        ...parseContentTypeFormat(postData)
-      } : undefined;
+    this.on('-new-window', (event, url, frameName, disposition, rawFeatures, referrer, postData) => {
+      const postBody = postData
+        ? {
+            data: postData,
+            ...parseContentTypeFormat(postData)
+          }
+        : undefined;
       const details: Electron.HandlerDetails = {
         url,
         frameName,
@@ -710,18 +741,23 @@ WebContents.prototype._init = function () {
           postData,
           overrideBrowserWindowOptions: options || {},
           windowOpenArgs: details,
-          outlivesOpener: result.outlivesOpener
+          outlivesOpener: result.outlivesOpener,
+          createWindow: result.createWindow
         });
       }
     });
 
     let windowOpenOverriddenOptions: BrowserWindowConstructorOptions | null = null;
     let windowOpenOutlivesOpenerOption: boolean = false;
-    this.on('-will-add-new-contents' as any, (event: Electron.Event, url: string, frameName: string, rawFeatures: string, disposition: Electron.HandlerDetails['disposition'], referrer: Electron.Referrer, postData: PostData) => {
-      const postBody = postData ? {
-        data: postData,
-        ...parseContentTypeFormat(postData)
-      } : undefined;
+    let createWindow: Electron.CreateWindowFunction | undefined;
+
+    this.on('-will-add-new-contents', (event, url, frameName, rawFeatures, disposition, referrer, postData) => {
+      const postBody = postData
+        ? {
+            data: postData,
+            ...parseContentTypeFormat(postData)
+          }
+        : undefined;
       const details: Electron.HandlerDetails = {
         url,
         frameName,
@@ -741,15 +777,18 @@ WebContents.prototype._init = function () {
 
       windowOpenOutlivesOpenerOption = result.outlivesOpener;
       windowOpenOverriddenOptions = result.browserWindowConstructorOptions;
+      createWindow = result.createWindow;
       if (!event.defaultPrevented) {
-        const secureOverrideWebPreferences = windowOpenOverriddenOptions ? {
-          // Allow setting of backgroundColor as a webPreference even though
-          // it's technically a BrowserWindowConstructorOptions option because
-          // we need to access it in the renderer at init time.
-          backgroundColor: windowOpenOverriddenOptions.backgroundColor,
-          transparent: windowOpenOverriddenOptions.transparent,
-          ...windowOpenOverriddenOptions.webPreferences
-        } : undefined;
+        const secureOverrideWebPreferences = windowOpenOverriddenOptions
+          ? {
+              // Allow setting of backgroundColor as a webPreference even though
+            // it's technically a BrowserWindowConstructorOptions option because
+            // we need to access it in the renderer at init time.
+              backgroundColor: windowOpenOverriddenOptions.backgroundColor,
+              transparent: windowOpenOverriddenOptions.transparent,
+              ...windowOpenOverriddenOptions.webPreferences
+            }
+          : undefined;
         const { webPreferences: parsedWebPreferences } = parseFeatures(rawFeatures);
         const webPreferences = makeWebPreferences({
           embedder: this,
@@ -765,11 +804,12 @@ WebContents.prototype._init = function () {
     });
 
     // Create a new browser window for "window.open"
-    this.on('-add-new-contents' as any, (event: Electron.Event, webContents: Electron.WebContents, disposition: string,
-      _userGesture: boolean, _left: number, _top: number, _width: number, _height: number, url: string, frameName: string,
-      referrer: Electron.Referrer, rawFeatures: string, postData: PostData) => {
+    this.on('-add-new-contents', (event, webContents, disposition, _userGesture, _left, _top, _width, _height, url, frameName, referrer, rawFeatures, postData) => {
       const overriddenOptions = windowOpenOverriddenOptions || undefined;
       const outlivesOpener = windowOpenOutlivesOpenerOption;
+      const windowOpenFunction = createWindow;
+
+      createWindow = undefined;
       windowOpenOverriddenOptions = null;
       // false is the default
       windowOpenOutlivesOpenerOption = false;
@@ -792,7 +832,8 @@ WebContents.prototype._init = function () {
           frameName,
           features: rawFeatures
         },
-        outlivesOpener
+        outlivesOpener,
+        createWindow: windowOpenFunction
       });
     });
   }
@@ -801,7 +842,7 @@ WebContents.prototype._init = function () {
     app.emit('login', event, this, ...args);
   });
 
-  this.on('ready-to-show' as any, () => {
+  this.on('ready-to-show', () => {
     const owner = this.getOwnerBrowserWindow();
     if (owner && !owner.isDestroyed()) {
       process.nextTick(() => {
@@ -815,6 +856,74 @@ WebContents.prototype._init = function () {
       // Cancel it if there are no handlers
       event.preventDefault();
       callback('');
+    }
+  });
+
+  const originCounts = new Map<string, number>();
+  const openDialogs = new Set<AbortController>();
+  this.on('-run-dialog', async (info, callback) => {
+    const originUrl = new URL(info.frame.url);
+    const origin = originUrl.protocol === 'file:' ? originUrl.href : originUrl.origin;
+    if ((originCounts.get(origin) ?? 0) < 0) return callback(false, '');
+
+    const prefs = this.getLastWebPreferences();
+    if (!prefs || prefs.disableDialogs) return callback(false, '');
+
+    // We don't support prompt() for some reason :)
+    if (info.dialogType === 'prompt') return callback(false, '');
+
+    originCounts.set(origin, (originCounts.get(origin) ?? 0) + 1);
+
+    // TODO: translate?
+    const checkbox = originCounts.get(origin)! > 1 && prefs.safeDialogs ? prefs.safeDialogsMessage || 'Prevent this app from creating additional dialogs' : '';
+    const parent = this.getOwnerBrowserWindow();
+    const abortController = new AbortController();
+    const options: MessageBoxOptions = {
+      message: info.messageText,
+      checkboxLabel: checkbox,
+      signal: abortController.signal,
+      ...(info.dialogType === 'confirm')
+        ? {
+            buttons: ['OK', 'Cancel'],
+            defaultId: 0,
+            cancelId: 1
+          }
+        : {
+            buttons: ['OK'],
+            defaultId: -1, // No default button
+            cancelId: 0
+          }
+    };
+    openDialogs.add(abortController);
+    const promise = parent && !prefs.offscreen ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options);
+    try {
+      const result = await promise;
+      if (abortController.signal.aborted || this.isDestroyed()) return;
+      if (result.checkboxChecked) originCounts.set(origin, -1);
+      return callback(result.response === 0, '');
+    } finally {
+      openDialogs.delete(abortController);
+    }
+  });
+
+  this.on('-cancel-dialogs', () => {
+    for (const controller of openDialogs) { controller.abort(); }
+    openDialogs.clear();
+  });
+
+  // TODO(samuelmaddock): remove deprecated 'console-message' arguments
+  this.on('-console-message' as any, (event: Electron.Event<Electron.WebContentsConsoleMessageEventParams>) => {
+    const hasDeprecatedListener = this.listeners('console-message').some(listener => listener.length > 1);
+    if (hasDeprecatedListener) {
+      consoleMessageDeprecated();
+    }
+    this.emit('console-message', event, (event as any)._level, event.message, event.lineNumber, event.sourceId);
+  });
+
+  this.on('-unresponsive' as any, (event: Electron.Event<any>) => {
+    const shouldEmit = !event.shouldIgnore && event.visible && event.rendererInitialized;
+    if (shouldEmit) {
+      this.emit('unresponsive', event);
     }
   });
 

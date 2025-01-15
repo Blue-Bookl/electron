@@ -16,6 +16,7 @@
 #include "gin/dictionary.h"
 #include "shell/browser/browser.h"
 #include "shell/common/gin_converters/callback_converter.h"
+#include "shell/common/gin_helper/error_thrower.h"
 
 namespace gin {
 
@@ -50,7 +51,7 @@ NSString* ContainingDiskImageDevice(NSString* bundlePath) {
       stringWithFileSystemRepresentation:fs.f_mntfromname
                                   length:strlen(fs.f_mntfromname)];
 
-  NSTask* hdiutil = [[[NSTask alloc] init] autorelease];
+  NSTask* hdiutil = [[NSTask alloc] init];
   [hdiutil setLaunchPath:@"/usr/bin/hdiutil"];
   [hdiutil setArguments:[NSArray arrayWithObjects:@"info", @"-plist", nil]];
   [hdiutil setStandardOutput:[NSPipe pipe]];
@@ -63,8 +64,8 @@ NSString* ContainingDiskImageDevice(NSString* bundlePath) {
   NSDictionary* info =
       [NSPropertyListSerialization propertyListWithData:data
                                                 options:NSPropertyListImmutable
-                                                 format:NULL
-                                                  error:NULL];
+                                                 format:nil
+                                                  error:nil];
 
   if (![info isKindOfClass:[NSDictionary class]])
     return nil;
@@ -100,7 +101,7 @@ NSString* ContainingDiskImageDevice(NSString* bundlePath) {
 NSString* ResolvePath(NSString* path) {
   NSString* standardizedPath = [path stringByStandardizingPath];
   char resolved[PATH_MAX];
-  if (realpath([standardizedPath UTF8String], resolved) == NULL)
+  if (realpath([standardizedPath UTF8String], resolved) == nullptr)
     return path;
   return @(resolved);
 }
@@ -147,20 +148,20 @@ bool AuthorizedInstall(NSString* srcPath, NSString* dstPath, bool* canceled) {
 
   // Get the authorization
   OSStatus err =
-      AuthorizationCreate(NULL, kAuthorizationEmptyEnvironment,
+      AuthorizationCreate(nullptr, kAuthorizationEmptyEnvironment,
                           kAuthorizationFlagDefaults, &myAuthorizationRef);
   if (err != errAuthorizationSuccess)
     return false;
 
-  AuthorizationItem myItems = {kAuthorizationRightExecute, 0, NULL, 0};
+  AuthorizationItem myItems = {kAuthorizationRightExecute, 0, nullptr, 0};
   AuthorizationRights myRights = {1, &myItems};
   AuthorizationFlags myFlags =
       (AuthorizationFlags)(kAuthorizationFlagInteractionAllowed |
                            kAuthorizationFlagExtendRights |
                            kAuthorizationFlagPreAuthorize);
 
-  err = AuthorizationCopyRights(myAuthorizationRef, &myRights, NULL, myFlags,
-                                NULL);
+  err = AuthorizationCopyRights(myAuthorizationRef, &myRights, nullptr, myFlags,
+                                nullptr);
   if (err != errAuthorizationSuccess) {
     if (err == errAuthorizationCanceled && canceled)
       *canceled = true;
@@ -170,7 +171,7 @@ bool AuthorizedInstall(NSString* srcPath, NSString* dstPath, bool* canceled) {
   static OSStatus (*security_AuthorizationExecuteWithPrivileges)(
       AuthorizationRef authorization, const char* pathToTool,
       AuthorizationFlags options, char* const* arguments,
-      FILE** communicationsPipe) = NULL;
+      FILE** communicationsPipe) = nullptr;
   if (!security_AuthorizationExecuteWithPrivileges) {
     // On 10.7, AuthorizationExecuteWithPrivileges is deprecated. We want to
     // still use it since there's no good alternative (without requiring code
@@ -188,9 +189,10 @@ bool AuthorizedInstall(NSString* srcPath, NSString* dstPath, bool* canceled) {
   // Delete the destination
   {
     char rf[] = "-rf";
-    char* args[] = {rf, (char*)[dstPath fileSystemRepresentation], NULL};
+    char* args[] = {rf, (char*)[dstPath fileSystemRepresentation], nullptr};
     err = security_AuthorizationExecuteWithPrivileges(
-        myAuthorizationRef, "/bin/rm", kAuthorizationFlagDefaults, args, NULL);
+        myAuthorizationRef, "/bin/rm", kAuthorizationFlagDefaults, args,
+        nullptr);
     if (err != errAuthorizationSuccess)
       goto fail;
 
@@ -205,9 +207,10 @@ bool AuthorizedInstall(NSString* srcPath, NSString* dstPath, bool* canceled) {
   {
     char pR[] = "-pR";
     char* args[] = {pR, (char*)[srcPath fileSystemRepresentation],
-                    (char*)[dstPath fileSystemRepresentation], NULL};
+                    (char*)[dstPath fileSystemRepresentation], nullptr};
     err = security_AuthorizationExecuteWithPrivileges(
-        myAuthorizationRef, "/bin/cp", kAuthorizationFlagDefaults, args, NULL);
+        myAuthorizationRef, "/bin/cp", kAuthorizationFlagDefaults, args,
+        nullptr);
     if (err != errAuthorizationSuccess)
       goto fail;
 
@@ -272,8 +275,8 @@ bool Trash(NSString* path) {
   if (floor(NSAppKitVersionNumber) >= NSAppKitVersionNumber10_8) {
     result = [[NSFileManager defaultManager]
           trashItemAtURL:[NSURL fileURLWithPath:path]
-        resultingItemURL:NULL
-                   error:NULL];
+        resultingItemURL:nil
+                   error:nil];
   }
 
   // As a last resort try trashing with AppleScript.
@@ -286,8 +289,8 @@ tell application "Finder"
 move theFile to trash
 end tell
 )str";
-    NSAppleScript* appleScript = [[[NSAppleScript alloc]
-        initWithSource:[NSString stringWithFormat:@(code), path]] autorelease];
+    NSAppleScript* appleScript = [[NSAppleScript alloc]
+        initWithSource:[NSString stringWithFormat:@(code), path]];
     NSDictionary* errorDict = nil;
     NSAppleEventDescriptor* scriptResult =
         [appleScript executeAndReturnError:&errorDict];

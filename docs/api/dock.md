@@ -7,7 +7,7 @@ _This class is not exported from the `'electron'` module. It is only available a
 
 The following example shows how to bounce your icon on the dock.
 
-```javascript
+```js
 const { app } = require('electron')
 app.dock.bounce()
 ```
@@ -80,4 +80,4 @@ Returns `Menu | null` - The application's [dock menu][dock-menu].
 
 Sets the `image` associated with this dock icon.
 
-[dock-menu]: https://developer.apple.com/macos/human-interface-guidelines/menus/dock-menus/
+[dock-menu]: https://developer.apple.com/design/human-interface-guidelines/dock-menus

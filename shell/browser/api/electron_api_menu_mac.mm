@@ -12,20 +12,19 @@
 #include "base/task/current_thread.h"
 #include "base/task/sequenced_task_runner.h"
 #include "content/public/browser/browser_task_traits.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/browser/web_contents.h"
+#include "shell/browser/api/electron_api_base_window.h"
 #include "shell/browser/native_window.h"
 #include "shell/common/keyboard_util.h"
 #include "shell/common/node_includes.h"
 
 namespace {
 
-static scoped_nsobject<NSMenu> applicationMenu_;
+static NSMenu* __strong applicationMenu_;
 
 ui::Accelerator GetAcceleratorFromKeyEquivalentAndModifierMask(
     NSString* key_equivalent,
     NSUInteger modifier_mask) {
-  absl::optional<char16_t> shifted_char;
+  std::optional<char16_t> shifted_char;
   ui::KeyboardCode code = electron::KeyboardCodeFromStr(
       base::SysNSStringToUTF8(key_equivalent), &shifted_char);
   int modifiers = 0;
@@ -52,6 +51,7 @@ void MenuMac::PopupAt(BaseWindow* window,
                       int x,
                       int y,
                       int positioning_item,
+                      ui::mojom::MenuSourceType source_type,
                       base::OnceClosure callback) {
   NativeWindow* native_window = window->window();
   if (!native_window)
@@ -74,16 +74,15 @@ v8::Local<v8::Value> Menu::GetUserAcceleratorAt(int command_id) const {
   if (![NSMenuItem usesUserKeyEquivalents])
     return v8::Null(isolate);
 
-  auto controller = base::scoped_nsobject<ElectronMenuController>(
-      [[ElectronMenuController alloc] initWithModel:model()
-                              useDefaultAccelerator:NO]);
+  auto controller = [[ElectronMenuController alloc] initWithModel:model()
+                                            useDefaultAccelerator:NO];
 
   int command_index = GetIndexOfCommandId(command_id);
   if (command_index == -1)
     return v8::Null(isolate);
 
-  base::scoped_nsobject<NSMenuItem> item =
-      [controller makeMenuItemForIndex:command_index fromModel:model()];
+  NSMenuItem* item = [controller makeMenuItemForIndex:command_index
+                                            fromModel:model()];
   if ([[item userKeyEquivalent] length] == 0)
     return v8::Null(isolate);
 
@@ -108,9 +107,9 @@ void MenuMac::PopupOnUI(const base::WeakPtr<NativeWindow>& native_window,
   base::OnceClosure close_callback =
       base::BindOnce(&MenuMac::OnClosed, weak_factory_.GetWeakPtr(), window_id,
                      std::move(callback));
-  popup_controllers_[window_id] = base::scoped_nsobject<ElectronMenuController>(
+  popup_controllers_[window_id] =
       [[ElectronMenuController alloc] initWithModel:model()
-                              useDefaultAccelerator:NO]);
+                              useDefaultAccelerator:NO];
   NSMenu* menu = [popup_controllers_[window_id] menu];
   NSView* view = [nswindow contentView];
 
@@ -170,9 +169,9 @@ void MenuMac::ClosePopupAt(int32_t window_id) {
 std::u16string MenuMac::GetAcceleratorTextAtForTesting(int index) const {
   // A least effort to get the real shortcut text of NSMenuItem, the code does
   // not need to be perfect since it is test only.
-  base::scoped_nsobject<ElectronMenuController> controller(
+  ElectronMenuController* controller =
       [[ElectronMenuController alloc] initWithModel:model()
-                              useDefaultAccelerator:NO]);
+                              useDefaultAccelerator:NO];
   NSMenuItem* item = [[controller menu] itemAtIndex:index];
   std::u16string text;
   NSEventModifierFlags modifiers = [item keyEquivalentModifierMask];
@@ -226,15 +225,15 @@ void MenuMac::OnClosed(int32_t window_id, base::OnceClosure callback) {
 // static
 void Menu::SetApplicationMenu(Menu* base_menu) {
   MenuMac* menu = static_cast<MenuMac*>(base_menu);
-  base::scoped_nsobject<ElectronMenuController> menu_controller(
+  ElectronMenuController* menu_controller =
       [[ElectronMenuController alloc] initWithModel:menu->model_.get()
-                              useDefaultAccelerator:YES]);
+                              useDefaultAccelerator:YES];
 
   NSRunLoop* currentRunLoop = [NSRunLoop currentRunLoop];
   [currentRunLoop cancelPerformSelector:@selector(setMainMenu:)
                                  target:NSApp
                                argument:applicationMenu_];
-  applicationMenu_.reset([[menu_controller menu] retain]);
+  applicationMenu_ = [menu_controller menu];
   [[NSRunLoop currentRunLoop]
       performSelector:@selector(setMainMenu:)
                target:NSApp
@@ -242,8 +241,7 @@ void Menu::SetApplicationMenu(Menu* base_menu) {
                 order:0
                 modes:[NSArray arrayWithObject:NSDefaultRunLoopMode]];
 
-  // Ensure the menu_controller_ is destroyed after main menu is set.
-  menu_controller.swap(menu->menu_controller_);
+  menu->menu_controller_ = menu_controller;
 }
 
 // static

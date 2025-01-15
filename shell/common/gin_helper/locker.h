@@ -7,7 +7,10 @@
 
 #include <memory>
 
-#include "v8/include/v8.h"
+namespace v8 {
+class Isolate;
+class Locker;
+}  // namespace v8
 
 namespace gin_helper {
 
@@ -21,13 +24,12 @@ class Locker {
   Locker(const Locker&) = delete;
   Locker& operator=(const Locker&) = delete;
 
+  // prevent heap allocation
+  void* operator new(size_t size) = delete;
+  void operator delete(void*, size_t) = delete;
+
  private:
-  void* operator new(size_t size);
-  void operator delete(void*, size_t);
-
-  std::unique_ptr<v8::Locker> locker_;
-
-  static bool g_is_browser_process;
+  const std::unique_ptr<v8::Locker> locker_;
 };
 
 }  // namespace gin_helper

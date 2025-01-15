@@ -13,21 +13,22 @@
 #include "base/process/kill.h"
 #include "base/process/launch.h"
 #include "base/process/process.h"
+#include "chrome/browser/browser_process.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/service_process_host.h"
 #include "content/public/common/result_codes.h"
 #include "gin/handle.h"
 #include "gin/object_template_builder.h"
-#include "gin/wrappable.h"
 #include "mojo/public/cpp/bindings/pending_receiver.h"
 #include "shell/browser/api/message_port.h"
 #include "shell/browser/javascript_environment.h"
+#include "shell/browser/net/system_network_context_manager.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_converters/file_path_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
-#include "shell/common/v8_value_serializer.h"
+#include "shell/common/v8_util.h"
 #include "third_party/blink/public/common/messaging/message_port_descriptor.h"
 #include "third_party/blink/public/common/messaging/transferable_message_mojom_traits.h"
 
@@ -43,6 +44,8 @@
 
 namespace electron {
 
+namespace {
+
 base::IDMap<api::UtilityProcessWrapper*, base::ProcessId>&
 GetAllUtilityProcessWrappers() {
   static base::NoDestructor<
@@ -50,6 +53,8 @@ GetAllUtilityProcessWrappers() {
       s_all_utility_process_wrappers;
   return *s_all_utility_process_wrappers;
 }
+
+}  // namespace
 
 namespace api {
 
@@ -62,7 +67,8 @@ UtilityProcessWrapper::UtilityProcessWrapper(
     std::map<IOHandle, IOType> stdio,
     base::EnvironmentMap env_map,
     base::FilePath current_working_directory,
-    bool use_plugin_helper) {
+    bool use_plugin_helper,
+    bool create_network_observer) {
 #if BUILDFLAG(IS_WIN)
   base::win::ScopedHandle stdout_write(nullptr);
   base::win::ScopedHandle stderr_write(nullptr);
@@ -143,6 +149,9 @@ UtilityProcessWrapper::UtilityProcessWrapper(
     }
   }
 
+  // Watch for service process termination events.
+  content::ServiceProcessHost::AddObserver(this);
+
   mojo::PendingReceiver<node::mojom::NodeService> receiver =
       node_service_remote_.BindNewPipeAndPassReceiver();
 
@@ -161,6 +170,7 @@ UtilityProcessWrapper::UtilityProcessWrapper(
 #if BUILDFLAG(IS_WIN)
           .WithStdoutHandle(std::move(stdout_write))
           .WithStderrHandle(std::move(stderr_write))
+          .WithFeedbackCursorOff(true)
 #elif BUILDFLAG(IS_POSIX)
           .WithAdditionalFds(std::move(fds_to_remap))
 #endif
@@ -170,9 +180,10 @@ UtilityProcessWrapper::UtilityProcessWrapper(
                               : content::ChildProcessHost::CHILD_NORMAL)
 #endif
           .WithProcessCallback(
-              base::BindOnce(&UtilityProcessWrapper::OnServiceProcessLaunched,
+              base::BindOnce(&UtilityProcessWrapper::OnServiceProcessLaunch,
                              weak_factory_.GetWeakPtr()))
           .Pass());
+
   node_service_remote_.set_disconnect_with_reason_handler(
       base::BindOnce(&UtilityProcessWrapper::OnServiceProcessDisconnected,
                      weak_factory_.GetWeakPtr()));
@@ -192,35 +203,110 @@ UtilityProcessWrapper::UtilityProcessWrapper(
   connector_->set_connection_error_handler(base::BindOnce(
       &UtilityProcessWrapper::CloseConnectorPort, weak_factory_.GetWeakPtr()));
 
-  node_service_remote_->Initialize(std::move(params));
+  mojo::PendingRemote<network::mojom::URLLoaderFactory> url_loader_factory;
+  network::mojom::URLLoaderFactoryParamsPtr loader_params =
+      network::mojom::URLLoaderFactoryParams::New();
+  loader_params->process_id = pid_;
+  loader_params->is_orb_enabled = false;
+  loader_params->is_trusted = true;
+  if (create_network_observer) {
+    url_loader_network_observer_.emplace();
+    loader_params->url_loader_network_observer =
+        url_loader_network_observer_->Bind();
+  }
+  network::mojom::NetworkContext* network_context =
+      g_browser_process->system_network_context_manager()->GetContext();
+  network_context->CreateURLLoaderFactory(
+      url_loader_factory.InitWithNewPipeAndPassReceiver(),
+      std::move(loader_params));
+  params->url_loader_factory = std::move(url_loader_factory);
+  mojo::PendingRemote<network::mojom::HostResolver> host_resolver;
+  network_context->CreateHostResolver(
+      {}, host_resolver.InitWithNewPipeAndPassReceiver());
+  params->host_resolver = std::move(host_resolver);
+  params->use_network_observer_from_url_loader_factory =
+      create_network_observer;
+
+  node_service_remote_->Initialize(std::move(params),
+                                   receiver_.BindNewPipeAndPassRemote());
 }
 
-UtilityProcessWrapper::~UtilityProcessWrapper() = default;
+UtilityProcessWrapper::~UtilityProcessWrapper() {
+  content::ServiceProcessHost::RemoveObserver(this);
+}
 
-void UtilityProcessWrapper::OnServiceProcessLaunched(
+void UtilityProcessWrapper::OnServiceProcessLaunch(
     const base::Process& process) {
   DCHECK(node_service_remote_.is_connected());
   pid_ = process.Pid();
   GetAllUtilityProcessWrappers().AddWithID(this, pid_);
-  if (stdout_read_fd_ != -1) {
+  if (stdout_read_fd_ != -1)
     EmitWithoutEvent("stdout", stdout_read_fd_);
-  }
-  if (stderr_read_fd_ != -1) {
+  if (stderr_read_fd_ != -1)
     EmitWithoutEvent("stderr", stderr_read_fd_);
+  if (url_loader_network_observer_.has_value()) {
+    url_loader_network_observer_->set_process_id(pid_);
   }
-  // Emit 'spawn' event
   EmitWithoutEvent("spawn");
 }
 
-void UtilityProcessWrapper::OnServiceProcessDisconnected(
-    uint32_t error_code,
-    const std::string& description) {
+void UtilityProcessWrapper::HandleTermination(uint64_t exit_code) {
+  // HandleTermination is called from multiple callsites,
+  // we need to ensure we only process it for the first callsite.
+  if (terminated_)
+    return;
+  terminated_ = true;
+
   if (pid_ != base::kNullProcessId)
     GetAllUtilityProcessWrappers().Remove(pid_);
+
+  pid_ = base::kNullProcessId;
   CloseConnectorPort();
-  // Emit 'exit' event
-  EmitWithoutEvent("exit", error_code);
+  if (killed_) {
+#if BUILDFLAG(IS_POSIX)
+    // UtilityProcessWrapper::Kill relies on base::Process::Terminate
+    // to gracefully shutdown the process which is performed by sending
+    // SIGTERM signal. When listening for exit events via ServiceProcessHost
+    // observers, the exit code on posix is obtained via
+    // BrowserChildProcessHostImpl::GetTerminationInfo which inturn relies
+    // on waitpid to extract the exit signal. If the process is unavailable,
+    // then the exit_code will be set to 0, otherwise we get the signal that
+    // was sent during the base::Process::Terminate call. For a user, this is
+    // still a graceful shutdown case so lets' convert the exit code to the
+    // expected value.
+    if (exit_code == SIGTERM || exit_code == SIGKILL) {
+      exit_code = 0;
+    }
+#endif
+  }
+  EmitWithoutEvent("exit", exit_code);
   Unpin();
+}
+
+void UtilityProcessWrapper::OnServiceProcessDisconnected(
+    uint32_t exit_code,
+    const std::string& description) {
+  if (description == "process_exit_termination") {
+    HandleTermination(exit_code);
+  }
+}
+
+void UtilityProcessWrapper::OnServiceProcessTerminatedNormally(
+    const content::ServiceProcessInfo& info) {
+  if (!info.IsService<node::mojom::NodeService>() ||
+      info.GetProcess().Pid() != pid_)
+    return;
+
+  HandleTermination(info.exit_code());
+}
+
+void UtilityProcessWrapper::OnServiceProcessCrashed(
+    const content::ServiceProcessInfo& info) {
+  if (!info.IsService<node::mojom::NodeService>() ||
+      info.GetProcess().Pid() != pid_)
+    return;
+
+  HandleTermination(info.exit_code());
 }
 
 void UtilityProcessWrapper::CloseConnectorPort() {
@@ -232,14 +318,9 @@ void UtilityProcessWrapper::CloseConnectorPort() {
   }
 }
 
-void UtilityProcessWrapper::Shutdown(int exit_code) {
-  if (pid_ != base::kNullProcessId)
-    GetAllUtilityProcessWrappers().Remove(pid_);
+void UtilityProcessWrapper::Shutdown(uint64_t exit_code) {
   node_service_remote_.reset();
-  CloseConnectorPort();
-  // Emit 'exit' event
-  EmitWithoutEvent("exit", exit_code);
-  Unpin();
+  HandleTermination(exit_code);
 }
 
 void UtilityProcessWrapper::PostMessage(gin::Arguments* args) {
@@ -277,7 +358,7 @@ void UtilityProcessWrapper::PostMessage(gin::Arguments* args) {
   connector_->Accept(&mojo_message);
 }
 
-bool UtilityProcessWrapper::Kill() const {
+bool UtilityProcessWrapper::Kill() {
   if (pid_ == base::kNullProcessId)
     return false;
   base::Process process = base::Process::Open(pid_);
@@ -290,6 +371,7 @@ bool UtilityProcessWrapper::Kill() const {
   // process reap should be signaled through the zygote via
   // content::ZygoteCommunication::EnsureProcessTerminated.
   base::EnsureProcessTerminated(std::move(process));
+  killed_ = result;
   return result;
 }
 
@@ -315,6 +397,11 @@ bool UtilityProcessWrapper::Accept(mojo::Message* mojo_message) {
   return true;
 }
 
+void UtilityProcessWrapper::OnV8FatalError(const std::string& location,
+                                           const std::string& report) {
+  EmitWithoutEvent("error", "FatalError", location, report);
+}
+
 // static
 raw_ptr<UtilityProcessWrapper> UtilityProcessWrapper::FromProcessId(
     base::ProcessId pid) {
@@ -328,11 +415,12 @@ gin::Handle<UtilityProcessWrapper> UtilityProcessWrapper::Create(
   gin_helper::Dictionary dict;
   if (!args->GetNext(&dict)) {
     args->ThrowTypeError("Options must be an object.");
-    return gin::Handle<UtilityProcessWrapper>();
+    return {};
   }
 
   std::u16string display_name;
   bool use_plugin_helper = false;
+  bool create_network_observer = false;
   std::map<IOHandle, IOType> stdio;
   base::FilePath current_working_directory;
   base::EnvironmentMap env_map;
@@ -341,23 +429,24 @@ gin::Handle<UtilityProcessWrapper> UtilityProcessWrapper::Create(
   dict.Get("modulePath", &params->script);
   if (dict.Has("args") && !dict.Get("args", &params->args)) {
     args->ThrowTypeError("Invalid value for args");
-    return gin::Handle<UtilityProcessWrapper>();
+    return {};
   }
 
   gin_helper::Dictionary opts;
   if (dict.Get("options", &opts)) {
     if (opts.Has("env") && !opts.Get("env", &env_map)) {
       args->ThrowTypeError("Invalid value for env");
-      return gin::Handle<UtilityProcessWrapper>();
+      return {};
     }
 
     if (opts.Has("execArgv") && !opts.Get("execArgv", &params->exec_args)) {
       args->ThrowTypeError("Invalid value for execArgv");
-      return gin::Handle<UtilityProcessWrapper>();
+      return {};
     }
 
     opts.Get("serviceName", &display_name);
     opts.Get("cwd", &current_working_directory);
+    opts.Get("respondToAuthRequestsFromMainProcess", &create_network_observer);
 
     std::vector<std::string> stdio_arr{"ignore", "inherit", "inherit"};
     opts.Get("stdio", &stdio_arr);
@@ -378,10 +467,10 @@ gin::Handle<UtilityProcessWrapper> UtilityProcessWrapper::Create(
 #endif
   }
   auto handle = gin::CreateHandle(
-      args->isolate(),
-      new UtilityProcessWrapper(std::move(params), display_name,
-                                std::move(stdio), env_map,
-                                current_working_directory, use_plugin_helper));
+      args->isolate(), new UtilityProcessWrapper(
+                           std::move(params), display_name, std::move(stdio),
+                           env_map, current_working_directory,
+                           use_plugin_helper, create_network_observer));
   handle->Pin(args->isolate());
   return handle;
 }

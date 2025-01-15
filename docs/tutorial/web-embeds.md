@@ -4,7 +4,7 @@
 
 If you want to embed (third-party) web content in an Electron `BrowserWindow`,
 there are three options available to you: `<iframe>` tags, `<webview>` tags,
-and `BrowserViews`. Each one offers slightly different functionality and is
+and `WebContentsView`. Each one offers slightly different functionality and is
 useful in different situations. To help you choose between these, this guide
 explains the differences and capabilities of each option.
 
@@ -23,8 +23,8 @@ and only allow the capabilities you want to support.
 [we do not recommend you to use WebViews](../api/webview-tag.md#warning),
 as this tag undergoes dramatic architectural changes that may affect stability
 of your application. Consider switching to alternatives, like `iframe` and
-Electron's `BrowserView`, or an architecture that avoids embedded content
-by design.
+Electron's [`WebContentsView`](../api/web-contents-view.md), or an architecture
+that avoids embedded content by design.
 
 [WebViews](../api/webview-tag.md) are based on Chromium's WebViews and are not
 explicitly supported by Electron. We do not guarantee that the WebView API will
@@ -42,16 +42,15 @@ Compared to an `<iframe>`, `<webview>` tends to be slightly slower but offers
 much greater control in loading and communicating with the third-party content
 and handling various events.
 
-### BrowserViews
+### WebContentsView
 
-[BrowserViews](../api/browser-view.md) are not a part of the DOM - instead,
-they are created in and controlled by your Main process. They are simply
-another layer of web content on top of your existing window. This means
-that they are completely separate from your own `BrowserWindow` content and
-their position is not controlled by the DOM or CSS. Instead, it is controlled
-by setting the bounds in the Main process.
+[`WebContentsView`](../api/web-contents-view.md)s are not a part of the
+DOM—instead, they are created, controlled, positioned, and sized by your
+Main process. Using `WebContentsView`, you can combine and layer many pages
+together in the same [`BaseWindow`](../api/base-window.md).
 
-`BrowserViews` offer the greatest control over their contents, since they
-implement the `webContents` similarly to how the `BrowserWindow` does it.
-However, as `BrowserViews` are not a part of your DOM, but are rather overlaid
-on top of them, you will have to manage their position manually.
+`WebContentsView`s offer the greatest control over their contents, since they
+implement the `webContents` similarly to how `BrowserWindow` does it. However,
+as `WebContentsView`s are not elements inside the DOM, positioning them
+accurately with respect to DOM content requires coordination between the
+Main and Renderer processes.

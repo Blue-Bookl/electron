@@ -50,12 +50,12 @@ See the [API documentation for more options and modes][setprogressbar].
 In this example, we add a progress bar to the main window that increments over time
 using Node.js timers.
 
-```javascript fiddle='docs/fiddles/features/progress-bar'
-const { app, BrowserWindow } = require('electron')
+```fiddle docs/fiddles/features/progress-bar
+const { app, BrowserWindow } = require('electron/main')
 
 let progressInterval
 
-const createWindow = () => {
+function createWindow () {
   const win = new BrowserWindow({
     width: 800,
     height: 600
@@ -73,8 +73,11 @@ const createWindow = () => {
     win.setProgressBar(c)
 
     // increment or reset progress bar
-    if (c < 2) c += INCREMENT
-    else c = 0
+    if (c < 2) {
+      c += INCREMENT
+    } else {
+      c = (-INCREMENT * 5) // reset to a bit less than 0 to show reset state
+    }
   }, INTERVAL_DELAY)
 }
 
@@ -109,4 +112,5 @@ For macOS, the progress bar will also be indicated for your application
 when using [Mission Control](https://support.apple.com/en-us/HT204100):
 
 ![Mission Control Progress Bar](../images/mission-control-progress-bar.png)
+
 [setprogressbar]: ../api/browser-window.md#winsetprogressbarprogress-options

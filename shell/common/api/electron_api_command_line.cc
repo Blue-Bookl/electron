@@ -4,7 +4,6 @@
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/strings/string_util.h"
 #include "services/network/public/cpp/network_switches.h"
 #include "shell/common/gin_converters/base_converter.h"
 #include "shell/common/gin_converters/file_path_converter.h"
@@ -14,12 +13,11 @@
 namespace {
 
 bool HasSwitch(const std::string& name) {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(name.c_str());
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(name);
 }
 
 base::CommandLine::StringType GetSwitchValue(const std::string& name) {
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueNative(
-      name.c_str());
+  return base::CommandLine::ForCurrentProcess()->GetSwitchValueNative(name);
 }
 
 void AppendSwitch(const std::string& switch_string,

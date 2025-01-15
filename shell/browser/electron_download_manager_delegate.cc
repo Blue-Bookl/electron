@@ -5,6 +5,7 @@
 #include "shell/browser/electron_download_manager_delegate.h"
 
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <utility>
 
@@ -28,6 +29,8 @@
 #include "shell/browser/web_contents_preferences.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_converters/file_path_converter.h"
+#include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/promise.h"
 #include "shell/common/options_switches.h"
 #include "shell/common/thread_restrictions.h"
 
@@ -145,7 +148,7 @@ file_dialog::Filters FormatFilterForExtensions(
       if (first_separator_index != std::string::npos)
         first_extension = first_extension.substr(0, first_separator_index);
 
-      // Find the extension name without the preceeding '.' character.
+      // Find the extension name without the preceding '.' character.
       std::string ext_name = first_extension;
       size_t ext_index = ext_name.find_first_not_of('.');
       if (ext_index != std::string::npos)
@@ -166,10 +169,10 @@ file_dialog::Filters FormatFilterForExtensions(
       // Having '*' in the description could cause the windows file dialog to
       // not include the file extension in the file dialog. So strip out any '*'
       // characters if `keep_extension_visible` is set.
-      base::ReplaceChars(desc, "*", base::StringPiece(), &desc);
+      base::ReplaceChars(desc, "*", std::string_view(), &desc);
     }
 
-    // Remove the preceeding '.' character from the extension.
+    // Remove the preceding '.' character from the extension.
     size_t ext_index = ext.find_first_not_of('.');
     if (ext_index != std::string::npos)
       ext = ext.substr(ext_index);
@@ -216,7 +219,7 @@ void ElectronDownloadManagerDelegate::GetItemSaveDialogOptions(
 
 void ElectronDownloadManagerDelegate::OnDownloadPathGenerated(
     uint32_t download_id,
-    content::DownloadTargetCallback callback,
+    download::DownloadTargetCallback callback,
     const base::FilePath& default_path) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   ScopedAllowBlockingForElectron allow_blocking;
@@ -271,17 +274,20 @@ void ElectronDownloadManagerDelegate::OnDownloadPathGenerated(
     std::ignore = dialog_promise.Then(std::move(dialog_callback));
     file_dialog::ShowSaveDialog(settings, std::move(dialog_promise));
   } else {
-    std::move(callback).Run(
-        path, download::DownloadItem::TARGET_DISPOSITION_PROMPT,
-        download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        item->GetInsecureDownloadStatus(), path, base::FilePath(),
-        std::string() /*mime_type*/, download::DOWNLOAD_INTERRUPT_REASON_NONE);
+    download::DownloadTargetInfo target_info;
+    target_info.target_path = path;
+    target_info.intermediate_path = path;
+    target_info.target_disposition =
+        download::DownloadItem::TARGET_DISPOSITION_PROMPT;
+    target_info.insecure_download_status = item->GetInsecureDownloadStatus();
+
+    std::move(callback).Run(std::move(target_info));
   }
 }
 
 void ElectronDownloadManagerDelegate::OnDownloadSaveDialogDone(
     uint32_t download_id,
-    content::DownloadTargetCallback download_callback,
+    download::DownloadTargetCallback download_callback,
     gin_helper::Dictionary result) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
@@ -311,11 +317,14 @@ void ElectronDownloadManagerDelegate::OnDownloadSaveDialogDone(
   const auto interrupt_reason =
       path.empty() ? download::DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
                    : download::DOWNLOAD_INTERRUPT_REASON_NONE;
-  std::move(download_callback)
-      .Run(path, download::DownloadItem::TARGET_DISPOSITION_PROMPT,
-           download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-           item->GetInsecureDownloadStatus(), path, base::FilePath(),
-           std::string() /*mime_type*/, interrupt_reason);
+  download::DownloadTargetInfo target_info;
+  target_info.target_path = path;
+  target_info.intermediate_path = path;
+  target_info.target_disposition =
+      download::DownloadItem::TARGET_DISPOSITION_PROMPT;
+  target_info.insecure_download_status = item->GetInsecureDownloadStatus();
+  target_info.interrupt_reason = interrupt_reason;
+  std::move(download_callback).Run(std::move(target_info));
 }
 
 void ElectronDownloadManagerDelegate::Shutdown() {
@@ -325,17 +334,14 @@ void ElectronDownloadManagerDelegate::Shutdown() {
 
 bool ElectronDownloadManagerDelegate::DetermineDownloadTarget(
     download::DownloadItem* download,
-    content::DownloadTargetCallback* callback) {
+    download::DownloadTargetCallback* callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (!download->GetForcedFilePath().empty()) {
-    std::move(*callback).Run(
-        download->GetForcedFilePath(),
-        download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-        download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        download::DownloadItem::InsecureDownloadStatus::UNKNOWN,
-        download->GetForcedFilePath(), base::FilePath(),
-        std::string() /*mime_type*/, download::DOWNLOAD_INTERRUPT_REASON_NONE);
+    download::DownloadTargetInfo target_info;
+    target_info.target_path = download->GetForcedFilePath();
+    target_info.intermediate_path = download->GetForcedFilePath();
+    std::move(*callback).Run(std::move(target_info));
     return true;
   }
 
@@ -343,12 +349,10 @@ bool ElectronDownloadManagerDelegate::DetermineDownloadTarget(
   base::FilePath save_path;
   GetItemSavePath(download, &save_path);
   if (!save_path.empty()) {
-    std::move(*callback).Run(
-        save_path, download::DownloadItem::TARGET_DISPOSITION_OVERWRITE,
-        download::DOWNLOAD_DANGER_TYPE_NOT_DANGEROUS,
-        download::DownloadItem::InsecureDownloadStatus::UNKNOWN, save_path,
-        base::FilePath(), std::string() /*mime_type*/,
-        download::DOWNLOAD_INTERRUPT_REASON_NONE);
+    download::DownloadTargetInfo target_info;
+    target_info.target_path = save_path;
+    target_info.intermediate_path = save_path;
+    std::move(*callback).Run(std::move(target_info));
     return true;
   }
 

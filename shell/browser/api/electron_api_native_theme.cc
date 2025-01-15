@@ -13,7 +13,6 @@
 #include "shell/common/gin_helper/dictionary.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
-#include "ui/gfx/color_utils.h"
 #include "ui/native_theme/native_theme.h"
 
 namespace electron::api {
@@ -68,6 +67,10 @@ bool NativeTheme::InForcedColorsMode() {
   return ui_theme_->InForcedColorsMode();
 }
 
+bool NativeTheme::GetPrefersReducedTransparency() {
+  return ui_theme_->GetPrefersReducedTransparency();
+}
+
 #if BUILDFLAG(IS_MAC)
 const CFStringRef WhiteOnBlack = CFSTR("whiteOnBlack");
 const CFStringRef UniversalAccessDomain = CFSTR("com.apple.universalaccess");
@@ -108,7 +111,9 @@ gin::ObjectTemplateBuilder NativeTheme::GetObjectTemplateBuilder(
                    &NativeTheme::ShouldUseHighContrastColors)
       .SetProperty("shouldUseInvertedColorScheme",
                    &NativeTheme::ShouldUseInvertedColorScheme)
-      .SetProperty("inForcedColorsMode", &NativeTheme::InForcedColorsMode);
+      .SetProperty("inForcedColorsMode", &NativeTheme::InForcedColorsMode)
+      .SetProperty("prefersReducedTransparency",
+                   &NativeTheme::GetPrefersReducedTransparency);
 }
 
 const char* NativeTheme::GetTypeName() {

@@ -159,7 +159,7 @@ void AutofillAgent::ShowSuggestions(const blink::WebFormControlElement& element,
       (!options.autofill_on_empty_values && value.IsEmpty()) ||
       (options.requires_caret_at_end &&
        (element.SelectionStart() != element.SelectionEnd() ||
-        element.SelectionEnd() != static_cast<int>(value.length())))) {
+        element.SelectionEnd() != value.length()))) {
     // Any popup currently showing is obsolete.
     HidePopup();
     return;
@@ -195,7 +195,8 @@ void AutofillAgent::HidePopup() {
 void AutofillAgent::ShowPopup(const blink::WebFormControlElement& element,
                               const std::vector<std::u16string>& values,
                               const std::vector<std::u16string>& labels) {
-  gfx::RectF bounds = render_frame()->ElementBoundsInWindow(element);
+  auto bounds = gfx::RectF{
+      render_frame()->ConvertViewportToWindow(element.BoundsInWidget())};
   GetAutofillDriver()->ShowAutofillPopup(bounds, values, labels);
 }
 

@@ -5,12 +5,12 @@
 #include "shell/browser/ui/views/submenu_button.h"
 
 #include "base/strings/string_util.h"
-#include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_enums.mojom.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/text_utils.h"
 #include "ui/views/animation/flood_fill_ink_drop_ripple.h"
+#include "ui/views/animation/ink_drop_highlight.h"
 #include "ui/views/animation/ink_drop_host.h"
 #include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/controls/button/label_button_border.h"
@@ -20,7 +20,7 @@ namespace electron {
 SubmenuButton::SubmenuButton(PressedCallback callback,
                              const std::u16string& title,
                              const SkColor& background_color)
-    : views::MenuButton(callback, gfx::RemoveAccelerator(title)),
+    : views::MenuButton(std::move(callback), gfx::RemoveAccelerator(title)),
       background_color_(background_color) {
 #if BUILDFLAG(IS_LINUX)
   // Dont' use native style border.
@@ -95,5 +95,8 @@ void SubmenuButton::GetCharacterPosition(const std::u16string& text,
   gfx::Canvas::SizeStringInt(text.substr(0, index), gfx::FontList(), pos,
                              &height, 0, 0);
 }
+
+BEGIN_METADATA(SubmenuButton)
+END_METADATA
 
 }  // namespace electron

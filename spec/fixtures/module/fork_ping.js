@@ -1,10 +1,12 @@
-const path = require('path');
+const childProcess = require('node:child_process');
+const path = require('node:path');
 
 process.on('uncaughtException', function (error) {
   process.send(error.stack);
 });
 
-const child = require('child_process').fork(path.join(__dirname, '/ping.js'));
+const child = childProcess.fork(path.join(__dirname, '/ping.js'));
+
 process.on('message', function (msg) {
   child.send(msg);
 });

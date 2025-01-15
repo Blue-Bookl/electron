@@ -7,8 +7,11 @@
 
 #include <string>
 
-#include "base/compiler_specific.h"
 #include "content/public/browser/devtools_manager_delegate.h"
+
+namespace content {
+class BrowserContext;
+}
 
 namespace electron {
 
@@ -30,9 +33,10 @@ class DevToolsManagerDelegate : public content::DevToolsManagerDelegate {
                      NotHandledCallback callback) override;
   scoped_refptr<content::DevToolsAgentHost> CreateNewTarget(
       const GURL& url,
-      bool for_tab) override;
+      TargetType target_type) override;
   std::string GetDiscoveryPageHTML() override;
   bool HasBundledFrontendResources() override;
+  content::BrowserContext* GetDefaultBrowserContext() override;
 };
 
 }  // namespace electron

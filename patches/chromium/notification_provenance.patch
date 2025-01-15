@@ -7,10 +7,10 @@ Pass RenderFrameHost through to PlatformNotificationService
 so Electron can identify which renderer a notification came from.
 
 diff --git a/chrome/browser/notifications/platform_notification_service_impl.cc b/chrome/browser/notifications/platform_notification_service_impl.cc
-index aa9ce8fa016317d543752462f356ccdef6b931eb..71fc184b94286803300c396fe4845e5f17911f55 100644
+index df1fb67901e872feef2602a0d8df5ec2c1984a43..08455c3d811fe1d51e15846dc6a68385f344d5aa 100644
 --- a/chrome/browser/notifications/platform_notification_service_impl.cc
 +++ b/chrome/browser/notifications/platform_notification_service_impl.cc
-@@ -200,6 +200,7 @@ bool PlatformNotificationServiceImpl::WasClosedProgrammatically(
+@@ -221,6 +221,7 @@ bool PlatformNotificationServiceImpl::WasClosedProgrammatically(
  
  // TODO(awdf): Rename to DisplayNonPersistentNotification (Similar for Close)
  void PlatformNotificationServiceImpl::DisplayNotification(
@@ -19,10 +19,10 @@ index aa9ce8fa016317d543752462f356ccdef6b931eb..71fc184b94286803300c396fe4845e5f
      const GURL& origin,
      const GURL& document_url,
 diff --git a/chrome/browser/notifications/platform_notification_service_impl.h b/chrome/browser/notifications/platform_notification_service_impl.h
-index 380a2da617ff5e49f780f4b89d87ceefd75bb6f7..ec78a854531b7d52fbaa5de71fc5e67180fad8c8 100644
+index e76c702ed12cbc51a418ec8056abbd33b371bfb9..ead485e17a27ec0654cd681b988530286b327938 100644
 --- a/chrome/browser/notifications/platform_notification_service_impl.h
 +++ b/chrome/browser/notifications/platform_notification_service_impl.h
-@@ -56,6 +56,7 @@ class PlatformNotificationServiceImpl
+@@ -57,6 +57,7 @@ class PlatformNotificationServiceImpl
  
    // content::PlatformNotificationService implementation.
    void DisplayNotification(
@@ -31,10 +31,10 @@ index 380a2da617ff5e49f780f4b89d87ceefd75bb6f7..ec78a854531b7d52fbaa5de71fc5e671
        const GURL& origin,
        const GURL& document_url,
 diff --git a/content/browser/notifications/blink_notification_service_impl.cc b/content/browser/notifications/blink_notification_service_impl.cc
-index 688c95eeb2a1ea60b004eb643cb5afcff48c11bd..226d1e3f01f976d8b35e6b3fbd332683d1a0f84b 100644
+index 776c9b4bad591bb0174457caadf5bcab5ffc490b..b5475b328299d823c2cee8cae2fc9111ebc033cb 100644
 --- a/content/browser/notifications/blink_notification_service_impl.cc
 +++ b/content/browser/notifications/blink_notification_service_impl.cc
-@@ -87,12 +87,14 @@ BlinkNotificationServiceImpl::BlinkNotificationServiceImpl(
+@@ -84,12 +84,14 @@ BlinkNotificationServiceImpl::BlinkNotificationServiceImpl(
      BrowserContext* browser_context,
      scoped_refptr<ServiceWorkerContextWrapper> service_worker_context,
      RenderProcessHost* render_process_host,
@@ -48,8 +48,8 @@ index 688c95eeb2a1ea60b004eb643cb5afcff48c11bd..226d1e3f01f976d8b35e6b3fbd332683
 +      render_frame_host_(render_frame_host),
        browser_context_(browser_context),
        service_worker_context_(std::move(service_worker_context)),
-       render_process_host_id_(render_process_host->GetID()),
-@@ -184,7 +186,7 @@ void BlinkNotificationServiceImpl::DisplayNonPersistentNotification(
+       render_process_host_id_(render_process_host->GetDeprecatedID()),
+@@ -181,7 +183,7 @@ void BlinkNotificationServiceImpl::DisplayNonPersistentNotification(
        creator_type_);
  
    browser_context_->GetPlatformNotificationService()->DisplayNotification(
@@ -79,10 +79,10 @@ index e7cc73f375ada7ee8715d331c3d372e0f59a0cdf..c0a142bea4a9a30c10dbb30c72fedce9
  
    scoped_refptr<ServiceWorkerContextWrapper> service_worker_context_;
 diff --git a/content/browser/notifications/blink_notification_service_impl_unittest.cc b/content/browser/notifications/blink_notification_service_impl_unittest.cc
-index 00965c253f28bd3947255b2ab77bf3a0bb71f14a..e04a7eef94990dfb0e2fca2e116352fe80965303 100644
+index 07e06ac6a3f14081f61f44620b537e5442419660..f2b8a977277c1f1ab014edd007d5df766b70f328 100644
 --- a/content/browser/notifications/blink_notification_service_impl_unittest.cc
 +++ b/content/browser/notifications/blink_notification_service_impl_unittest.cc
-@@ -136,7 +136,7 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
+@@ -129,7 +129,7 @@ class BlinkNotificationServiceImplTest : public ::testing::Test {
      notification_service_ = std::make_unique<BlinkNotificationServiceImpl>(
          notification_context_.get(), &browser_context_,
          embedded_worker_helper_->context_wrapper(), &render_process_host_,
@@ -92,10 +92,10 @@ index 00965c253f28bd3947255b2ab77bf3a0bb71f14a..e04a7eef94990dfb0e2fca2e116352fe
          contents_.get()->GetPrimaryMainFrame()->GetWeakDocumentPtr(),
          RenderProcessHost::NotificationServiceCreatorType::kDocument,
 diff --git a/content/browser/notifications/platform_notification_context_impl.cc b/content/browser/notifications/platform_notification_context_impl.cc
-index 9814861ab18fa88bc781f83acb602129b6f3de1f..1c5a2efc2749697aa3d38247f491eabf240c1aa5 100644
+index 09ddcfdcf1bbdc35f8e2ad9c89e05f76a6231f68..e3e87a7d08cb2f55706d7d4f06245817811bc83b 100644
 --- a/content/browser/notifications/platform_notification_context_impl.cc
 +++ b/content/browser/notifications/platform_notification_context_impl.cc
-@@ -268,6 +268,7 @@ void PlatformNotificationContextImpl::Shutdown() {
+@@ -280,6 +280,7 @@ void PlatformNotificationContextImpl::Shutdown() {
  
  void PlatformNotificationContextImpl::CreateService(
      RenderProcessHost* render_process_host,
@@ -103,7 +103,7 @@ index 9814861ab18fa88bc781f83acb602129b6f3de1f..1c5a2efc2749697aa3d38247f491eabf
      const blink::StorageKey& storage_key,
      const GURL& document_url,
      const WeakDocumentPtr& weak_document_ptr,
-@@ -276,7 +277,7 @@ void PlatformNotificationContextImpl::CreateService(
+@@ -288,7 +289,7 @@ void PlatformNotificationContextImpl::CreateService(
    DCHECK_CURRENTLY_ON(BrowserThread::UI);
    services_.push_back(std::make_unique<BlinkNotificationServiceImpl>(
        this, browser_context_, service_worker_context_, render_process_host,
@@ -113,18 +113,18 @@ index 9814861ab18fa88bc781f83acb602129b6f3de1f..1c5a2efc2749697aa3d38247f491eabf
  }
  
 diff --git a/content/browser/notifications/platform_notification_context_impl.h b/content/browser/notifications/platform_notification_context_impl.h
-index bbd2aa78722fc0a14ac815ca0243b83965ad8d7c..b6e0a2fce3a0fb9c449aa1bef6a0f970ef5c2d07 100644
+index 05d3a12dd84c7005d46cc73b312f97ef418d96f5..4765de982802541b3efc7211d106acc72518fd0a 100644
 --- a/content/browser/notifications/platform_notification_context_impl.h
 +++ b/content/browser/notifications/platform_notification_context_impl.h
-@@ -45,6 +45,7 @@ struct NotificationDatabaseData;
- class PlatformNotificationServiceProxy;
+@@ -47,6 +47,7 @@ class PlatformNotificationServiceProxy;
  class RenderProcessHost;
  class ServiceWorkerContextWrapper;
+ class WeakDocumentPtr;
 +class RenderFrameHost;
  
  // Implementation of the Web Notification storage context. The public methods
  // defined in this interface must only be called on the UI thread.
-@@ -78,6 +79,7 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
+@@ -80,6 +81,7 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
    // service is created by a dedicated worker, or is `nullptr` otherwise.
    void CreateService(
        RenderProcessHost* render_process_host,
@@ -133,10 +133,10 @@ index bbd2aa78722fc0a14ac815ca0243b83965ad8d7c..b6e0a2fce3a0fb9c449aa1bef6a0f970
        const GURL& document_url,
        const WeakDocumentPtr& weak_document_ptr,
 diff --git a/content/browser/renderer_host/render_process_host_impl.cc b/content/browser/renderer_host/render_process_host_impl.cc
-index d0814b812f4880cd5577a0b95cbc406ae0147f95..17415e1009465f44b606236cd6e525e612d6ebe9 100644
+index bc2e3f9a2823dcce657ad13f09e8421c49fa7960..f2b5a9fbfc2a4bb4f9482fe64bf33fa9a739d5ce 100644
 --- a/content/browser/renderer_host/render_process_host_impl.cc
 +++ b/content/browser/renderer_host/render_process_host_impl.cc
-@@ -2178,7 +2178,7 @@ void RenderProcessHostImpl::CreateNotificationService(
+@@ -2110,7 +2110,7 @@ void RenderProcessHostImpl::CreateNotificationService(
      case RenderProcessHost::NotificationServiceCreatorType::kSharedWorker:
      case RenderProcessHost::NotificationServiceCreatorType::kDedicatedWorker: {
        storage_partition_impl_->GetPlatformNotificationContext()->CreateService(
@@ -145,7 +145,7 @@ index d0814b812f4880cd5577a0b95cbc406ae0147f95..17415e1009465f44b606236cd6e525e6
            creator_type, std::move(receiver));
        break;
      }
-@@ -2186,7 +2186,7 @@ void RenderProcessHostImpl::CreateNotificationService(
+@@ -2118,7 +2118,7 @@ void RenderProcessHostImpl::CreateNotificationService(
        CHECK(rfh);
  
        storage_partition_impl_->GetPlatformNotificationContext()->CreateService(
@@ -155,7 +155,7 @@ index d0814b812f4880cd5577a0b95cbc406ae0147f95..17415e1009465f44b606236cd6e525e6
        break;
      }
 diff --git a/content/public/browser/platform_notification_service.h b/content/public/browser/platform_notification_service.h
-index d9e36712dc3fbc6a9043e2c33660090ca2f7367b..7d910583eb22fc315eb0619febe518d5c24c0c4d 100644
+index 82db1db4175fb9f4ee7490d5a163164ef4495ecb..4f51683be14ba6ee657a290c7747969e052a88ca 100644
 --- a/content/public/browser/platform_notification_service.h
 +++ b/content/public/browser/platform_notification_service.h
 @@ -26,6 +26,8 @@ struct PlatformNotificationData;
@@ -176,10 +176,10 @@ index d9e36712dc3fbc6a9043e2c33660090ca2f7367b..7d910583eb22fc315eb0619febe518d5
        const GURL& origin,
        const GURL& document_url,
 diff --git a/content/test/mock_platform_notification_service.cc b/content/test/mock_platform_notification_service.cc
-index 56b56dff38b6f0e6a2967e10462667e0a8ead6ce..85a1894767df7026388e0486f96d9ddb602391e4 100644
+index 32a0cf38389989d3e1c287ad4a3f26b6d3615370..8a788f243e913ef26246b5ea4ac4ac5c1dfc4b86 100644
 --- a/content/test/mock_platform_notification_service.cc
 +++ b/content/test/mock_platform_notification_service.cc
-@@ -28,6 +28,7 @@ MockPlatformNotificationService::MockPlatformNotificationService(
+@@ -29,6 +29,7 @@ MockPlatformNotificationService::MockPlatformNotificationService(
  MockPlatformNotificationService::~MockPlatformNotificationService() = default;
  
  void MockPlatformNotificationService::DisplayNotification(
@@ -188,10 +188,10 @@ index 56b56dff38b6f0e6a2967e10462667e0a8ead6ce..85a1894767df7026388e0486f96d9ddb
      const GURL& origin,
      const GURL& document_url,
 diff --git a/content/test/mock_platform_notification_service.h b/content/test/mock_platform_notification_service.h
-index 7cd457defa729855c8d7c9d873efab5389d025cd..2b8e644d54d93a9499adcc1bf5660d72a24e2f29 100644
+index 5e91d867ba1b04358ecb670ba407adc65793b417..a0c5eaafd9ec2242927fe9170e9acd4069f654a0 100644
 --- a/content/test/mock_platform_notification_service.h
 +++ b/content/test/mock_platform_notification_service.h
-@@ -52,6 +52,7 @@ class MockPlatformNotificationService : public PlatformNotificationService {
+@@ -53,6 +53,7 @@ class MockPlatformNotificationService : public PlatformNotificationService {
  
    // PlatformNotificationService implementation.
    void DisplayNotification(

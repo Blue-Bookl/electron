@@ -5,25 +5,29 @@
 #ifndef ELECTRON_SHELL_BROWSER_API_ELECTRON_API_POWER_SAVE_BLOCKER_H_
 #define ELECTRON_SHELL_BROWSER_API_ELECTRON_API_POWER_SAVE_BLOCKER_H_
 
-#include <map>
-
-#include "gin/handle.h"
-#include "gin/object_template_builder.h"
+#include "base/containers/flat_map.h"
 #include "gin/wrappable.h"
 #include "mojo/public/cpp/bindings/remote.h"
 #include "services/device/public/mojom/wake_lock.mojom.h"
 
+namespace gin {
+class ObjectTemplateBuilder;
+
+template <typename T>
+class Handle;
+}  // namespace gin
+
 namespace electron::api {
 
-class PowerSaveBlocker : public gin::Wrappable<PowerSaveBlocker> {
+class PowerSaveBlocker final : public gin::Wrappable<PowerSaveBlocker> {
  public:
   static gin::Handle<PowerSaveBlocker> Create(v8::Isolate* isolate);
 
   // gin::Wrappable
+  static gin::WrapperInfo kWrapperInfo;
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
       v8::Isolate* isolate) override;
-
-  static gin::WrapperInfo kWrapperInfo;
+  const char* GetTypeName() override;
 
   // disable copy
   PowerSaveBlocker(const PowerSaveBlocker&) = delete;
@@ -48,8 +52,7 @@ class PowerSaveBlocker : public gin::Wrappable<PowerSaveBlocker> {
   bool is_wake_lock_active_ = false;
 
   // Map from id to the corresponding blocker type for each request.
-  using WakeLockTypeMap = std::map<int, device::mojom::WakeLockType>;
-  WakeLockTypeMap wake_lock_types_;
+  base::flat_map<int, device::mojom::WakeLockType> wake_lock_types_;
 
   mojo::Remote<device::mojom::WakeLock> wake_lock_;
 };

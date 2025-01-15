@@ -7,23 +7,22 @@
 #include <string>
 
 #include "base/apple/bundle_locations.h"
-#include "base/mac/foundation_util.h"
-#include "base/path_service.h"
-#include "services/device/public/cpp/geolocation/geolocation_manager.h"
-#include "services/device/public/cpp/geolocation/system_geolocation_source_mac.h"
+#include "base/apple/foundation_util.h"
+#include "services/device/public/cpp/geolocation/geolocation_system_permission_manager.h"
+#include "services/device/public/cpp/geolocation/system_geolocation_source_apple.h"
 #include "shell/browser/browser_process_impl.h"
-#import "shell/browser/mac/electron_application.h"
+#include "shell/browser/mac/electron_application.h"
 #include "shell/browser/mac/electron_application_delegate.h"
-#include "shell/common/electron_paths.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
 namespace electron {
 
+static ElectronApplicationDelegate* __strong delegate_;
+
 void ElectronBrowserMainParts::PreCreateMainMessageLoop() {
   // Set our own application delegate.
-  ElectronApplicationDelegate* delegate =
-      [[ElectronApplicationDelegate alloc] init];
-  [NSApp setDelegate:delegate];
+  delegate_ = [[ElectronApplicationDelegate alloc] init];
+  [NSApp setDelegate:delegate_];
 
   PreCreateMainMessageLoopCommon();
 
@@ -33,14 +32,15 @@ void ElectronBrowserMainParts::PreCreateMainMessageLoop() {
       setObject:@"NO"
          forKey:@"NSTreatUnknownArgumentsAsOpen"];
 
-  if (!device::GeolocationManager::GetInstance()) {
-    device::GeolocationManager::SetInstance(
-        device::SystemGeolocationSourceMac::CreateGeolocationManagerOnMac());
+  if (!device::GeolocationSystemPermissionManager::GetInstance()) {
+    device::GeolocationSystemPermissionManager::SetInstance(
+        device::SystemGeolocationSourceApple::
+            CreateGeolocationSystemPermissionManager());
   }
 }
 
 void ElectronBrowserMainParts::FreeAppDelegate() {
-  [[NSApp delegate] release];
+  delegate_ = nil;
   [NSApp setDelegate:nil];
 }
 
@@ -78,7 +78,6 @@ void ElectronBrowserMainParts::InitializeMainNib() {
   }
 
   [mainNib instantiateWithOwner:application topLevelObjects:nil];
-  [mainNib release];
 }
 
 std::string ElectronBrowserMainParts::GetCurrentSystemLocale() {

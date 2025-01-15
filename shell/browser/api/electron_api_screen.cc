@@ -5,15 +5,16 @@
 #include "shell/browser/api/electron_api_screen.h"
 
 #include <string>
+#include <string_view>
 
 #include "base/functional/bind.h"
-#include "gin/dictionary.h"
 #include "gin/handle.h"
 #include "shell/browser/browser.h"
 #include "shell/common/gin_converters/callback_converter.h"
 #include "shell/common/gin_converters/gfx_converter.h"
 #include "shell/common/gin_converters/native_window_converter.h"
 #include "shell/common/gin_helper/dictionary.h"
+#include "shell/common/gin_helper/error_thrower.h"
 #include "shell/common/gin_helper/object_template_builder.h"
 #include "shell/common/node_includes.h"
 #include "ui/display/display.h"
@@ -49,13 +50,13 @@ std::vector<std::string> MetricsToArray(uint32_t metrics) {
 }
 
 void DelayEmit(Screen* screen,
-               base::StringPiece name,
+               const std::string_view name,
                const display::Display& display) {
   screen->Emit(name, display);
 }
 
 void DelayEmitWithMetrics(Screen* screen,
-                          base::StringPiece name,
+                          const std::string_view name,
                           const display::Display& display,
                           const std::vector<std::string>& metrics) {
   screen->Emit(name, display, metrics);
@@ -81,7 +82,7 @@ gfx::Point Screen::GetCursorScreenPoint(v8::Isolate* isolate) {
     thrower.ThrowError(
         "screen.getCursorScreenPoint() cannot be called before a window has "
         "been created.");
-    return gfx::Point();
+    return {};
   }
 #endif
   return screen_->GetCursorScreenPoint();
@@ -109,10 +110,12 @@ void Screen::OnDisplayAdded(const display::Display& new_display) {
                                 "display-added", new_display));
 }
 
-void Screen::OnDisplayRemoved(const display::Display& old_display) {
-  base::SingleThreadTaskRunner::GetCurrentDefault()->PostNonNestableTask(
-      FROM_HERE, base::BindOnce(&DelayEmit, base::Unretained(this),
-                                "display-removed", old_display));
+void Screen::OnDisplaysRemoved(const display::Displays& old_displays) {
+  for (const auto& old_display : old_displays) {
+    base::SingleThreadTaskRunner::GetCurrentDefault()->PostNonNestableTask(
+        FROM_HERE, base::BindOnce(&DelayEmit, base::Unretained(this),
+                                  "display-removed", old_display));
+  }
 }
 
 void Screen::OnDisplayMetricsChanged(const display::Display& display,

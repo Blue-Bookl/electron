@@ -6,19 +6,21 @@
 #define ELECTRON_SHELL_BROWSER_API_ELECTRON_API_BROWSER_WINDOW_H_
 
 #include <string>
-#include <vector>
 
 #include "base/cancelable_callback.h"
 #include "shell/browser/api/electron_api_base_window.h"
 #include "shell/browser/api/electron_api_web_contents.h"
 #include "shell/browser/ui/drag_util.h"
-#include "shell/common/gin_helper/error_thrower.h"
+
+namespace gin_helper {
+class ErrorThrower;
+}  // namespace gin_helper
 
 namespace electron::api {
 
 class BrowserWindow : public BaseWindow,
-                      public content::WebContentsObserver,
-                      public ExtendedWebContentsObserver {
+                      private content::WebContentsObserver,
+                      private ExtendedWebContentsObserver {
  public:
   static gin_helper::WrappableBase* New(gin_helper::ErrorThrower thrower,
                                         gin::Arguments* args);
@@ -44,13 +46,9 @@ class BrowserWindow : public BaseWindow,
 
   // content::WebContentsObserver:
   void BeforeUnloadDialogCancelled() override;
-  void OnRendererUnresponsive(content::RenderProcessHost*) override;
-  void OnRendererResponsive(
-      content::RenderProcessHost* render_process_host) override;
   void WebContentsDestroyed() override;
 
   // ExtendedWebContentsObserver:
-  void OnCloseContents() override;
   void OnSetContentBounds(const gfx::Rect& rect) override;
   void OnActivateContents() override;
   void OnPageTitleUpdated(const std::u16string& title,
@@ -70,8 +68,6 @@ class BrowserWindow : public BaseWindow,
   void Focus() override;
   void Blur() override;
   void SetBackgroundColor(const std::string& color_name) override;
-  void SetBrowserView(
-      absl::optional<gin::Handle<BrowserView>> browser_view) override;
   void OnWindowShow() override;
   void OnWindowHide() override;
 
@@ -80,25 +76,12 @@ class BrowserWindow : public BaseWindow,
   void BlurWebView();
   bool IsWebViewFocused();
   v8::Local<v8::Value> GetWebContents(v8::Isolate* isolate);
-#if BUILDFLAG(IS_WIN)
-  void SetTitleBarOverlay(const gin_helper::Dictionary& options,
-                          gin_helper::Arguments* args);
-#endif
 
  private:
   // Helpers.
 
-  // Schedule a notification unresponsive event.
-  void ScheduleUnresponsiveEvent(int ms);
-
-  // Dispatch unresponsive event to observers.
-  void NotifyWindowUnresponsive();
-
-  // Closure that would be called when window is unresponsive when closing,
-  // it should be cancelled when we can prove that the window is responsive.
-  base::CancelableRepeatingClosure window_unresponsive_closure_;
-
   v8::Global<v8::Value> web_contents_;
+  v8::Global<v8::Value> web_contents_view_;
   base::WeakPtr<api::WebContents> api_web_contents_;
 
   base::WeakPtrFactory<BrowserWindow> weak_factory_{this};

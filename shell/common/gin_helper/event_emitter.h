@@ -5,11 +5,9 @@
 #ifndef ELECTRON_SHELL_COMMON_GIN_HELPER_EVENT_EMITTER_H_
 #define ELECTRON_SHELL_COMMON_GIN_HELPER_EVENT_EMITTER_H_
 
+#include <string_view>
 #include <utility>
-#include <vector>
 
-#include "content/public/browser/browser_thread.h"
-#include "electron/shell/common/api/api.mojom.h"
 #include "gin/handle.h"
 #include "shell/common/gin_helper/event.h"
 #include "shell/common/gin_helper/event_emitter_caller.h"
@@ -21,12 +19,11 @@ class RenderFrameHost;
 
 namespace gin_helper {
 
-// Provide helperers to emit event in JavaScript.
+// Provide helpers to emit event in JavaScript.
 template <typename T>
 class EventEmitter : public gin_helper::Wrappable<T> {
  public:
   using Base = gin_helper::Wrappable<T>;
-  using ValueArray = std::vector<v8::Local<v8::Value>>;
 
   // Make the convenient methods visible:
   // https://isocpp.org/wiki/faq/templates#nondependent-name-lookup-members
@@ -38,7 +35,7 @@ class EventEmitter : public gin_helper::Wrappable<T> {
 
   // this.emit(name, new Event(), args...);
   template <typename... Args>
-  bool Emit(base::StringPiece name, Args&&... args) {
+  bool Emit(const std::string_view name, Args&&... args) {
     v8::HandleScope handle_scope(isolate());
     v8::Local<v8::Object> wrapper = GetWrapper();
     if (wrapper.IsEmpty())
@@ -48,17 +45,28 @@ class EventEmitter : public gin_helper::Wrappable<T> {
     return EmitWithEvent(name, event, std::forward<Args>(args)...);
   }
 
+  // this.emit(name, args...);
+  template <typename... Args>
+  void EmitWithoutEvent(const std::string_view name, Args&&... args) {
+    v8::HandleScope handle_scope(isolate());
+    v8::Local<v8::Object> wrapper = GetWrapper();
+    if (wrapper.IsEmpty())
+      return;
+    gin_helper::EmitEvent(isolate(), GetWrapper(), name,
+                          std::forward<Args>(args)...);
+  }
+
   // disable copy
   EventEmitter(const EventEmitter&) = delete;
   EventEmitter& operator=(const EventEmitter&) = delete;
 
  protected:
-  EventEmitter() {}
+  EventEmitter() = default;
 
  private:
   // this.emit(name, event, args...);
   template <typename... Args>
-  bool EmitWithEvent(base::StringPiece name,
+  bool EmitWithEvent(const std::string_view name,
                      gin::Handle<gin_helper::internal::Event> event,
                      Args&&... args) {
     // It's possible that |this| will be deleted by EmitEvent, so save anything

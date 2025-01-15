@@ -7,10 +7,11 @@
 #include <windows.h>
 #include <wtsapi32.h>
 
+#include "base/logging.h"
 #include "base/win/windows_types.h"
 #include "base/win/wrapped_window_proc.h"
 #include "content/public/browser/browser_task_traits.h"
-#include "ui/base/win/shell.h"
+#include "content/public/browser/browser_thread.h"
 #include "ui/gfx/win/hwnd_util.h"
 
 namespace electron {
@@ -27,8 +28,8 @@ void PowerMonitor::InitPlatformSpecificMonitors() {
   WNDCLASSEX window_class;
   base::win::InitializeWindowClass(
       kPowerMonitorWindowClass,
-      &base::win::WrappedWindowProc<PowerMonitor::WndProcStatic>, 0, 0, 0, NULL,
-      NULL, NULL, NULL, NULL, &window_class);
+      &base::win::WrappedWindowProc<PowerMonitor::WndProcStatic>, 0, 0, 0,
+      nullptr, nullptr, nullptr, nullptr, nullptr, &window_class);
   instance_ = window_class.hInstance;
   atom_ = RegisterClassEx(&window_class);
 

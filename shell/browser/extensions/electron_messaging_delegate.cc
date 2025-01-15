@@ -8,9 +8,7 @@
 #include <utility>
 
 #include "base/functional/callback.h"
-#include "base/logging.h"
 #include "base/values.h"
-#include "build/build_config.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
@@ -41,7 +39,7 @@ ElectronMessagingDelegate::IsNativeMessagingHostAllowed(
   return PolicyPermission::DISALLOW;
 }
 
-absl::optional<base::Value::Dict> ElectronMessagingDelegate::MaybeGetTabInfo(
+std::optional<base::Value::Dict> ElectronMessagingDelegate::MaybeGetTabInfo(
     content::WebContents* web_contents) {
   if (web_contents) {
     auto* api_contents = electron::api::WebContents::From(web_contents);
@@ -54,7 +52,7 @@ absl::optional<base::Value::Dict> ElectronMessagingDelegate::MaybeGetTabInfo(
       return tab.ToValue();
     }
   }
-  return absl::nullopt;
+  return std::nullopt;
 }
 
 content::WebContents* ElectronMessagingDelegate::GetWebContentsByTabId(

@@ -12,21 +12,8 @@ TrayIcon::TrayIcon() = default;
 
 TrayIcon::~TrayIcon() = default;
 
-void TrayIcon::SetPressedImage(ImageType image) {}
-
-void TrayIcon::DisplayBalloon(const BalloonOptions& options) {}
-
-void TrayIcon::RemoveBalloon() {}
-
-void TrayIcon::Focus() {}
-
-void TrayIcon::PopUpContextMenu(const gfx::Point& pos,
-                                raw_ptr<ElectronMenuModel> menu_model) {}
-
-void TrayIcon::CloseContextMenu() {}
-
 gfx::Rect TrayIcon::GetBounds() {
-  return gfx::Rect();
+  return {};
 }
 
 void TrayIcon::NotifyClicked(const gfx::Rect& bounds,
@@ -39,6 +26,11 @@ void TrayIcon::NotifyClicked(const gfx::Rect& bounds,
 void TrayIcon::NotifyDoubleClicked(const gfx::Rect& bounds, int modifiers) {
   for (TrayIconObserver& observer : observers_)
     observer.OnDoubleClicked(bounds, modifiers);
+}
+
+void TrayIcon::NotifyMiddleClicked(const gfx::Rect& bounds, int modifiers) {
+  for (TrayIconObserver& observer : observers_)
+    observer.OnMiddleClicked(bounds, modifiers);
 }
 
 void TrayIcon::NotifyBalloonShow() {

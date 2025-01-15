@@ -40,8 +40,8 @@ npm install --save-dev @electron/rebuild
 .\node_modules\.bin\electron-rebuild.cmd
 ```
 
-For more information on usage and integration with other tools such as [Electron
-Packager][electron-packager], consult the project's README.
+For more information on usage and integration with other tools such as
+[Electron Packager][electron-packager], consult the project's README.
 
 ### Using `npm`
 
@@ -108,8 +108,8 @@ the following things:
 On Windows, by default, `node-gyp` links native modules against `node.dll`.
 However, in Electron 4.x and higher, the symbols needed by native modules are
 exported by `electron.exe`, and there is no `node.dll`. In order to load native
-modules on Windows, `node-gyp` installs a [delay-load
-hook](https://learn.microsoft.com/en-us/cpp/build/reference/error-handling-and-notification?view=msvc-170#notification-hooks) that triggers
+modules on Windows, `node-gyp` installs a
+[delay-load hook](https://learn.microsoft.com/en-us/cpp/build/reference/error-handling-and-notification?view=msvc-170#notification-hooks) that triggers
 when the native module is loaded, and redirects the `node.dll` reference to use
 the loading executable instead of looking for `node.dll` in the library search
 path (which would turn up nothing). As such, on Electron 4.x and higher,
@@ -169,5 +169,5 @@ environment variable.
 [abi]: https://en.wikipedia.org/wiki/Application_binary_interface
 [@electron/rebuild]: https://github.com/electron/rebuild
 [electron-forge]: https://electronforge.io/
-[electron-packager]: https://github.com/electron/electron-packager
+[electron-packager]: https://github.com/electron/packager
 [node-pre-gyp]: https://github.com/mapbox/node-pre-gyp

@@ -50,7 +50,7 @@ of this theming, due to the use of the macOS 10.14 SDK.
 This example demonstrates an Electron application that derives its theme colors from the
 `nativeTheme`. Additionally, it provides theme toggle and reset controls using IPC channels.
 
-```javascript fiddle='docs/fiddles/features/dark-mode'
+```fiddle docs/fiddles/features/dark-mode
 
 ```
 
@@ -75,7 +75,6 @@ Starting with the `index.html` file:
     <button id="reset-to-system">Reset to System Theme</button>
 
     <script src="renderer.js"></script>
-  </body>
 </body>
 </html>
 ```
@@ -136,7 +135,7 @@ Finally, the `main.js` file represents the main process and contains the actual 
 
 ```js
 const { app, BrowserWindow, ipcMain, nativeTheme } = require('electron')
-const path = require('path')
+const path = require('node:path')
 
 const createWindow = () => {
   const win = new BrowserWindow({
@@ -199,7 +198,7 @@ Run the example using Electron Fiddle and then click the "Toggle Dark Mode" butt
 
 [system-wide-dark-mode]: https://developer.apple.com/design/human-interface-guidelines/macos/visual-design/dark-mode/
 [electron-forge]: https://www.electronforge.io/
-[electron-packager]: https://github.com/electron/electron-packager
-[packager-darwindarkmode-api]: https://electron.github.io/electron-packager/main/interfaces/electronpackager.options.html#darwindarkmodesupport
+[electron-packager]: https://github.com/electron/packager
+[packager-darwindarkmode-api]: https://electron.github.io/packager/main/interfaces/electronpackager.options.html#darwindarkmodesupport
 [prefers-color-scheme]: https://developer.mozilla.org/en-US/docs/Web/CSS/@media/prefers-color-scheme
 [event-listeners]: https://developer.mozilla.org/en-US/docs/Web/API/EventTarget/addEventListener

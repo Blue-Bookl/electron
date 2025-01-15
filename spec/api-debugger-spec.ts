@@ -1,11 +1,14 @@
-import { expect } from 'chai';
-import * as http from 'http';
-import * as path from 'path';
 import { BrowserWindow } from 'electron/main';
-import { closeAllWindows } from './lib/window-helpers';
+
+import { expect } from 'chai';
+
+import { once } from 'node:events';
+import * as http from 'node:http';
+import * as path from 'node:path';
+
 import { emittedUntil } from './lib/events-helpers';
 import { listen } from './lib/spec-helpers';
-import { once } from 'events';
+import { closeAllWindows } from './lib/window-helpers';
 
 describe('debugger module', () => {
   const fixtures = path.resolve(__dirname, 'fixtures');
@@ -29,16 +32,12 @@ describe('debugger module', () => {
       expect(w.webContents.debugger.isAttached()).to.be.true();
     });
 
-    it('fails when protocol version is not supported', done => {
-      try {
-        w.webContents.debugger.attach('2.0');
-      } catch (err) {
-        expect(w.webContents.debugger.isAttached()).to.be.false();
-        done();
-      }
+    it('fails when protocol version is not supported', () => {
+      expect(() => w.webContents.debugger.attach('2.0')).to.throw();
+      expect(w.webContents.debugger.isAttached()).to.be.false();
     });
 
-    it('attaches when no protocol version is specified', async () => {
+    it('attaches when no protocol version is specified', () => {
       w.webContents.debugger.attach();
       expect(w.webContents.debugger.isAttached()).to.be.true();
     });
@@ -64,7 +63,7 @@ describe('debugger module', () => {
       });
       await detach;
       expect(w.webContents.debugger.isAttached()).to.be.false();
-      expect((w as any).devToolsWebContents.isDestroyed()).to.be.false();
+      expect(w.devToolsWebContents.isDestroyed()).to.be.false();
     });
   });
 
@@ -111,7 +110,7 @@ describe('debugger module', () => {
     it('fires message event', async () => {
       const url = process.platform !== 'win32'
         ? `file://${path.join(fixtures, 'pages', 'a.html')}`
-        : `file:///${path.join(fixtures, 'pages', 'a.html').replace(/\\/g, '/')}`;
+        : `file:///${path.join(fixtures, 'pages', 'a.html').replaceAll('\\', '/')}`;
       w.webContents.loadURL(url);
       w.webContents.debugger.attach();
       const message = emittedUntil(w.webContents.debugger, 'message',
@@ -119,9 +118,9 @@ describe('debugger module', () => {
       w.webContents.debugger.sendCommand('Console.enable');
       const [,, params] = await message;
       w.webContents.debugger.detach();
-      expect((params as any).message.level).to.equal('log');
-      expect((params as any).message.url).to.equal(url);
-      expect((params as any).message.text).to.equal('a');
+      expect(params.message.level).to.equal('log');
+      expect(params.message.url).to.equal(url);
+      expect(params.message.text).to.equal('a');
     });
 
     it('returns error message when command fails', async () => {
@@ -181,6 +180,38 @@ describe('debugger module', () => {
       await loadingFinished;
     });
 
+    it('can get and set cookies using the Storage API', async () => {
+      await w.webContents.loadURL('about:blank');
+      w.webContents.debugger.attach('1.1');
+
+      await w.webContents.debugger.sendCommand('Storage.clearCookies', {});
+      await w.webContents.debugger.sendCommand('Storage.setCookies', {
+        cookies: [
+          {
+            name: 'cookieOne',
+            value: 'cookieValueOne',
+            url: 'https://cookieone.com'
+          },
+          {
+            name: 'cookieTwo',
+            value: 'cookieValueTwo',
+            url: 'https://cookietwo.com'
+          }
+        ]
+      });
+
+      const { cookies } = await w.webContents.debugger.sendCommand('Storage.getCookies', {});
+      expect(cookies).to.have.lengthOf(2);
+
+      const cookieOne = cookies.find((cookie: any) => cookie.name === 'cookieOne');
+      expect(cookieOne.domain).to.equal('cookieone.com');
+      expect(cookieOne.value).to.equal('cookieValueOne');
+
+      const cookieTwo = cookies.find((cookie: any) => cookie.name === 'cookieTwo');
+      expect(cookieTwo.domain).to.equal('cookietwo.com');
+      expect(cookieTwo.value).to.equal('cookieValueTwo');
+    });
+
     it('uses empty sessionId by default', async () => {
       w.webContents.loadURL('about:blank');
       w.webContents.debugger.attach();
@@ -196,20 +227,25 @@ describe('debugger module', () => {
     it('creates unique session id for each target', (done) => {
       w.webContents.loadFile(path.join(__dirname, 'fixtures', 'sub-frames', 'debug-frames.html'));
       w.webContents.debugger.attach();
-      let session: String;
+      let debuggerSessionId: string;
 
       w.webContents.debugger.on('message', (event, ...args) => {
         const [method, params, sessionId] = args;
         if (method === 'Target.targetCreated') {
           w.webContents.debugger.sendCommand('Target.attachToTarget', { targetId: params.targetInfo.targetId, flatten: true }).then(result => {
-            session = result.sessionId;
+            debuggerSessionId = result.sessionId;
             w.webContents.debugger.sendCommand('Debugger.enable', {}, result.sessionId);
+
+            // Ensure debugger finds a script to pause to possibly reduce flaky
+            // tests.
+            w.webContents.mainFrame.executeJavaScript('void 0;');
           });
         }
         if (method === 'Debugger.scriptParsed') {
-          expect(sessionId).to.equal(session);
-          w.webContents.debugger.detach();
-          done();
+          if (sessionId === debuggerSessionId) {
+            w.webContents.debugger.detach();
+            done();
+          }
         }
       });
       w.webContents.debugger.sendCommand('Target.setDiscoverTargets', { discover: true });

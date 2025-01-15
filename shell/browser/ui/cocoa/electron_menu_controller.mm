@@ -8,13 +8,13 @@
 #include <string>
 #include <utility>
 
-#include "base/logging.h"
-#include "base/mac/foundation_util.h"
+#include "base/apple/foundation_util.h"
+#include "base/functional/callback.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
-#include "net/base/mac/url_conversions.h"
+#include "net/base/apple/url_conversions.h"
 #include "shell/browser/mac/electron_application.h"
 #include "shell/browser/native_window.h"
 #include "shell/browser/ui/electron_menu_model.h"
@@ -23,7 +23,6 @@
 #include "ui/base/l10n/l10n_util_mac.h"
 #include "ui/events/cocoa/cocoa_event_utils.h"
 #include "ui/events/keycodes/keyboard_code_conversion_mac.h"
-#include "ui/gfx/image/image.h"
 #include "ui/strings/grit/ui_strings.h"
 
 using content::BrowserThread;
@@ -31,10 +30,14 @@ using SharingItem = electron::ElectronMenuModel::SharingItem;
 
 namespace {
 
+static NSMenuItem* __strong recentDocumentsMenuItem_;
+static NSMenu* __strong recentDocumentsMenuSwap_;
+
 struct Role {
   SEL selector;
   const char* role;
 };
+
 Role kRolesMap[] = {
     {@selector(orderFrontStandardAboutPanel:), "about"},
     {@selector(hide:), "hide"},
@@ -65,6 +68,7 @@ Role kRolesMap[] = {
     {@selector(toggleFullScreenMode:), "togglefullscreen"},
     {@selector(toggleTabBar:), "toggletabbar"},
     {@selector(selectNextTab:), "selectnexttab"},
+    {@selector(toggleTabOverview:), "showalltabs"},
     {@selector(selectPreviousTab:), "selectprevioustab"},
     {@selector(mergeAllWindows:), "mergeallwindows"},
     {@selector(moveTabToNewWindow:), "movetabtonewwindow"},
@@ -85,13 +89,13 @@ bool MenuHasVisibleItems(const electron::ElectronMenuModel* model) {
 // Called when an empty submenu is created. This inserts a menu item labeled
 // "(empty)" into the submenu. Matches Windows behavior.
 NSMenu* MakeEmptySubmenu() {
-  base::scoped_nsobject<NSMenu> submenu([[NSMenu alloc] initWithTitle:@""]);
+  NSMenu* submenu = [[NSMenu alloc] initWithTitle:@""];
   NSString* empty_menu_title =
       l10n_util::GetNSString(IDS_APP_MENU_EMPTY_SUBMENU);
 
-  [submenu addItemWithTitle:empty_menu_title action:NULL keyEquivalent:@""];
+  [submenu addItemWithTitle:empty_menu_title action:nullptr keyEquivalent:@""];
   [[submenu itemAtIndex:0] setEnabled:NO];
-  return submenu.autorelease();
+  return submenu;
 }
 
 // Convert an SharingItem to an array of NSObjects.
@@ -103,7 +107,7 @@ NSArray* ConvertSharingItemToNS(const SharingItem& item) {
   }
   if (item.file_paths) {
     for (const base::FilePath& path : *item.file_paths)
-      [result addObject:base::mac::FilePathToNSURL(path)];
+      [result addObject:base::apple::FilePathToNSURL(path)];
   }
   if (item.urls) {
     for (const GURL& url : *item.urls)
@@ -129,14 +133,12 @@ NSArray* ConvertSharingItemToNS(const SharingItem& item) {
 }
 
 + (instancetype)weakPtrForModel:(electron::ElectronMenuModel*)model {
-  return [[[WeakPtrToElectronMenuModelAsNSObject alloc] initWithModel:model]
-      autorelease];
+  return [[WeakPtrToElectronMenuModelAsNSObject alloc] initWithModel:model];
 }
 
 + (electron::ElectronMenuModel*)getFrom:(id)instance {
-  return
-      [base::mac::ObjCCastStrict<WeakPtrToElectronMenuModelAsNSObject>(instance)
-          menuModel];
+  return [base::apple::ObjCCastStrict<WeakPtrToElectronMenuModelAsNSObject>(
+      instance) menuModel];
 }
 
 - (instancetype)initWithModel:(electron::ElectronMenuModel*)model {
@@ -151,12 +153,6 @@ NSArray* ConvertSharingItemToNS(const SharingItem& item) {
 }
 
 @end
-
-// Menu item is located for ease of removing it from the parent owner
-static base::scoped_nsobject<NSMenuItem> recentDocumentsMenuItem_;
-
-// Submenu retained to be swapped back to |recentDocumentsMenuItem_|
-static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
 
 @implementation ElectronMenuController
 
@@ -187,7 +183,6 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
   [self cancel];
 
   model_ = nullptr;
-  [super dealloc];
 }
 
 - (void)setCloseCallback:(base::OnceClosure)callback {
@@ -203,8 +198,8 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
     std::u16string title = u"Open Recent";
     NSString* openTitle = l10n_util::FixUpWindowsStyleLabel(title);
 
-    recentDocumentsMenuItem_.reset([[[[[NSApp mainMenu]
-        itemWithTitle:@"Electron"] submenu] itemWithTitle:openTitle] retain]);
+    recentDocumentsMenuItem_ = [[[[NSApp mainMenu] itemWithTitle:@"Electron"]
+        submenu] itemWithTitle:openTitle];
   }
 
   model_ = model->GetWeakPtr();
@@ -235,7 +230,7 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
 // Creates a NSMenu from the given model. If the model has submenus, this can
 // be invoked recursively.
 - (NSMenu*)menuFromModel:(electron::ElectronMenuModel*)model {
-  NSMenu* menu = [[[NSMenu alloc] initWithTitle:@""] autorelease];
+  NSMenu* menu = [[NSMenu alloc] initWithTitle:@""];
 
   const int count = model->GetItemCount();
   for (int index = 0; index < count; index++) {
@@ -260,7 +255,7 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
 - (void)moveMenuItems:(NSMenu*)source to:(NSMenu*)destination {
   const NSInteger count = [source numberOfItems];
   for (NSInteger index = 0; index < count; index++) {
-    NSMenuItem* removedItem = [[[source itemAtIndex:0] retain] autorelease];
+    NSMenuItem* removedItem = [source itemAtIndex:0];
     [source removeItemAtIndex:0];
     [destination addItem:removedItem];
   }
@@ -269,8 +264,7 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
 // Replaces the item's submenu instance with the singleton recent documents
 // menu. Previously replaced menu items will be recovered.
 - (void)replaceSubmenuShowingRecentDocuments:(NSMenuItem*)item {
-  NSMenu* recentDocumentsMenu =
-      [[[recentDocumentsMenuItem_ submenu] retain] autorelease];
+  NSMenu* recentDocumentsMenu = [recentDocumentsMenuItem_ submenu];
 
   // Remove menu items in recent documents back to swap menu
   [self moveMenuItems:recentDocumentsMenu to:recentDocumentsMenuSwap_];
@@ -278,7 +272,7 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
   [recentDocumentsMenuItem_ setSubmenu:recentDocumentsMenuSwap_];
 
   // Retain the item's submenu for a future recovery
-  recentDocumentsMenuSwap_.reset([[item submenu] retain]);
+  recentDocumentsMenuSwap_ = [item submenu];
 
   // Repopulate with items from the submenu to be replaced
   [self moveMenuItems:recentDocumentsMenuSwap_ to:recentDocumentsMenu];
@@ -291,7 +285,7 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
   DCHECK_EQ([item target], recentDocumentsMenu);
 
   // Remember the new menu item that carries the recent documents menu
-  recentDocumentsMenuItem_.reset([item retain]);
+  recentDocumentsMenuItem_ = item;
 }
 
 // Fill the menu with Share Menu items.
@@ -299,36 +293,33 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
   NSArray* items = ConvertSharingItemToNS(item);
   if ([items count] == 0)
     return MakeEmptySubmenu();
-  base::scoped_nsobject<NSMenu> menu([[NSMenu alloc] init]);
+  NSMenu* menu = [[NSMenu alloc] init];
   NSArray* services = [NSSharingService sharingServicesForItems:items];
   for (NSSharingService* service in services)
     [menu addItem:[self menuItemForService:service withItems:items]];
-  return menu.autorelease();
+  return menu;
 }
 
 // Creates a menu item that calls |service| when invoked.
 - (NSMenuItem*)menuItemForService:(NSSharingService*)service
                         withItems:(NSArray*)items {
-  base::scoped_nsobject<NSMenuItem> item([[NSMenuItem alloc]
-      initWithTitle:service.menuItemTitle
-             action:@selector(performShare:)
-      keyEquivalent:@""]);
+  NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:service.menuItemTitle
+                                                action:@selector(performShare:)
+                                         keyEquivalent:@""];
   [item setTarget:self];
   [item setImage:service.image];
   [item setRepresentedObject:@{@"service" : service, @"items" : items}];
-  return item.autorelease();
+  return item;
 }
 
-- (base::scoped_nsobject<NSMenuItem>)
-    makeMenuItemForIndex:(NSInteger)index
-               fromModel:(electron::ElectronMenuModel*)model {
+- (NSMenuItem*)makeMenuItemForIndex:(NSInteger)index
+                          fromModel:(electron::ElectronMenuModel*)model {
   std::u16string label16 = model->GetLabelAt(index);
   NSString* label = l10n_util::FixUpWindowsStyleLabel(label16);
 
-  base::scoped_nsobject<NSMenuItem> item([[NSMenuItem alloc]
-      initWithTitle:label
-             action:@selector(itemSelected:)
-      keyEquivalent:@""]);
+  NSMenuItem* item = [[NSMenuItem alloc] initWithTitle:label
+                                                action:@selector(itemSelected:)
+                                         keyEquivalent:@""];
 
   // If the menu item has an icon, set it.
   ui::ImageModel icon = model->GetIconAt(index);
@@ -347,7 +338,7 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
 
     [item setTarget:nil];
     [item setAction:nil];
-    NSMenu* submenu = [[[NSMenu alloc] initWithTitle:sub_label] autorelease];
+    NSMenu* submenu = [[NSMenu alloc] initWithTitle:sub_label];
     [item setSubmenu:submenu];
     [NSApp setServicesMenu:submenu];
   } else if (role == u"sharemenu") {
@@ -467,7 +458,8 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
     BOOL checked = model->IsItemCheckedAt(modelIndex);
     DCHECK([(id)item isKindOfClass:[NSMenuItem class]]);
 
-    [(id)item setState:(checked ? NSOnState : NSOffState)];
+    [(id)item
+        setState:(checked ? NSControlStateValueOn : NSControlStateValueOff)];
     [(id)item setHidden:(!model->IsVisibleAt(modelIndex))];
 
     return model->IsEnabledAt(modelIndex);
@@ -492,28 +484,28 @@ static base::scoped_nsobject<NSMenu> recentDocumentsMenuSwap_;
 // Performs the share action using the sharing service represented by |sender|.
 - (void)performShare:(NSMenuItem*)sender {
   NSDictionary* object =
-      base::mac::ObjCCastStrict<NSDictionary>([sender representedObject]);
+      base::apple::ObjCCastStrict<NSDictionary>([sender representedObject]);
   NSSharingService* service =
-      base::mac::ObjCCastStrict<NSSharingService>(object[@"service"]);
-  NSArray* items = base::mac::ObjCCastStrict<NSArray>(object[@"items"]);
+      base::apple::ObjCCastStrict<NSSharingService>(object[@"service"]);
+  NSArray* items = base::apple::ObjCCastStrict<NSArray>(object[@"items"]);
   [service setDelegate:self];
   [service performWithItems:items];
 }
 
 - (NSMenu*)menu {
   if (menu_)
-    return menu_.get();
+    return menu_;
 
-  if (model_ && model_->GetSharingItem()) {
-    NSMenu* menu = [self createShareMenuForItem:*model_->GetSharingItem()];
-    menu_.reset([menu retain]);
+  if (model_ && model_->sharing_item()) {
+    NSMenu* menu = [self createShareMenuForItem:*model_->sharing_item()];
+    menu_ = menu;
   } else {
-    menu_.reset([[NSMenu alloc] initWithTitle:@""]);
+    menu_ = [[NSMenu alloc] initWithTitle:@""];
     if (model_)
       [self populateWithModel:model_.get()];
   }
   [menu_ setDelegate:self];
-  return menu_.get();
+  return menu_;
 }
 
 - (BOOL)isMenuOpen {

@@ -6,25 +6,25 @@ Subject: Pass all globals through "require"
 (cherry picked from commit 7d015419cb7a0ecfe6728431a4ed2056cd411d62)
 
 diff --git a/lib/internal/modules/cjs/loader.js b/lib/internal/modules/cjs/loader.js
-index 31649227ed8eb36f58ec0b88d498b9e45009f76b..61605a052f976dc7fad224c3c81c2187f3862cdb 100644
+index 451b7c2195e7ad3ab0bde95259e054dc431d7de9..d49941881e6cfd8647a6d44a57e0daaf1c874702 100644
 --- a/lib/internal/modules/cjs/loader.js
 +++ b/lib/internal/modules/cjs/loader.js
-@@ -142,6 +142,13 @@ const {
+@@ -182,6 +182,13 @@ const {
    CHAR_FORWARD_SLASH,
  } = require('internal/constants');
  
 +// Store the "global" variable from global scope into a local scope, so we can
 +// still reference it from this file even after we deleted the "global" variable
 +// from the global scope.
-+const localGlobal = global;
++const localGlobal = (typeof global !== 'undefined') ? global : undefined;
 +// Do the same for "Buffer".
-+const localBuffer = Buffer;
++const localBuffer = (typeof Buffer !== 'undefined') ? Buffer : undefined;
 +
  const {
    isProxy,
  } = require('internal/util/types');
-@@ -1249,10 +1256,12 @@ Module.prototype._compile = function(content, filename) {
-   if (requireDepth === 0) statCache = new SafeMap();
+@@ -1541,10 +1548,12 @@ Module.prototype._compile = function(content, filename, format) {
+   this[kIsExecuting] = true;
    if (inspectorWrapper) {
      result = inspectorWrapper(compiledWrapper, thisValue, exports,
 -                              require, module, filename, dirname);
@@ -36,5 +36,5 @@ index 31649227ed8eb36f58ec0b88d498b9e45009f76b..61605a052f976dc7fad224c3c81c2187
 +                          [exports, require, module, filename,
 +                           dirname, process, localGlobal, localBuffer]);
    }
-   hasLoadedAnyUserCJSModule = true;
-   if (requireDepth === 0) statCache = null;
+   this[kIsExecuting] = false;
+   if (requireDepth === 0) { statCache = null; }

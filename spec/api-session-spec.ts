@@ -1,16 +1,19 @@
-import { expect } from 'chai';
-import * as http from 'http';
-import * as https from 'https';
-import * as path from 'path';
-import * as fs from 'fs';
-import * as ChildProcess from 'child_process';
 import { app, session, BrowserWindow, net, ipcMain, Session, webFrameMain, WebFrameMain } from 'electron/main';
-import * as send from 'send';
+
 import * as auth from 'basic-auth';
+import { expect } from 'chai';
+import * as send from 'send';
+
+import * as ChildProcess from 'node:child_process';
+import { once } from 'node:events';
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as https from 'node:https';
+import * as path from 'node:path';
+import { setTimeout } from 'node:timers/promises';
+
+import { defer, ifit, listen } from './lib/spec-helpers';
 import { closeAllWindows } from './lib/window-helpers';
-import { defer, listen } from './lib/spec-helpers';
-import { once } from 'events';
-import { setTimeout } from 'timers/promises';
 
 describe('session module', () => {
   const fixtures = path.resolve(__dirname, 'fixtures');
@@ -69,7 +72,7 @@ describe('session module', () => {
       const name = '1';
       const value = '1';
 
-      await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 });
+      await cookies.set({ url, name, value, expirationDate: (Date.now()) / 1000 + 120 });
       const c = (await cookies.get({ url }))[0];
       expect(c.name).to.equal(name);
       expect(c.value).to.equal(value);
@@ -121,36 +124,46 @@ describe('session module', () => {
       const name = '1';
       const value = '1';
 
-      await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 });
+      await cookies.set({ url, name, value, expirationDate: (Date.now()) / 1000 + 120 });
       const cs = await cookies.get({ domain: '127.0.0.1' });
       expect(cs.some(c => c.name === name && c.value === value)).to.equal(true);
     });
 
-    it('yields an error when setting a cookie with missing required fields', async () => {
+    it('rejects when setting a cookie with missing required fields', async () => {
       const { cookies } = session.defaultSession;
       const name = '1';
       const value = '1';
 
       await expect(
         cookies.set({ url: '', name, value })
-      ).to.eventually.be.rejectedWith('Failed to set cookie with an invalid domain attribute');
+      ).to.eventually.be.rejectedWith('Failed to set cookie - The cookie was set with an invalid Domain attribute.');
     });
 
-    it('yields an error when setting a cookie with an invalid URL', async () => {
+    it('rejects when setting a cookie with an invalid URL', async () => {
       const { cookies } = session.defaultSession;
       const name = '1';
       const value = '1';
 
       await expect(
         cookies.set({ url: 'asdf', name, value })
-      ).to.eventually.be.rejectedWith('Failed to set cookie with an invalid domain attribute');
+      ).to.eventually.be.rejectedWith('Failed to set cookie - The cookie was set with an invalid Domain attribute.');
+    });
+
+    it('rejects when setting a cookie with an invalid ASCII control character', async () => {
+      const { cookies } = session.defaultSession;
+      const name = 'BadCookie';
+      const value = 'test;test';
+
+      await expect(
+        cookies.set({ url, name, value })
+      ).to.eventually.be.rejectedWith('Failed to set cookie - The cookie contains ASCII control characters');
     });
 
     it('should overwrite previous cookies', async () => {
       const { cookies } = session.defaultSession;
       const name = 'DidOverwrite';
       for (const value of ['No', 'Yes']) {
-        await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 });
+        await cookies.set({ url, name, value, expirationDate: (Date.now()) / 1000 + 120 });
         const list = await cookies.get({ url });
 
         expect(list.some(cookie => cookie.name === name && cookie.value === value)).to.equal(true);
@@ -162,7 +175,7 @@ describe('session module', () => {
       const name = '2';
       const value = '2';
 
-      await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 });
+      await cookies.set({ url, name, value, expirationDate: (Date.now()) / 1000 + 120 });
       await cookies.remove(url, name);
       const list = await cookies.get({ url });
 
@@ -177,7 +190,7 @@ describe('session module', () => {
       const name = 'custom';
       const value = '1';
 
-      await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 });
+      await cookies.set({ url, name, value, expirationDate: (Date.now()) / 1000 + 120 });
       const list = await cookies.get({ url });
 
       expect(list).to.have.lengthOf(1);
@@ -192,7 +205,7 @@ describe('session module', () => {
       const value = 'bar';
 
       const a = once(cookies, 'changed');
-      await cookies.set({ url, name, value, expirationDate: (+new Date()) / 1000 + 120 });
+      await cookies.set({ url, name, value, expirationDate: (Date.now()) / 1000 + 120 });
       const [, setEventCookie, setEventCause, setEventRemoved] = await a;
 
       const b = once(cookies, 'changed');
@@ -237,7 +250,7 @@ describe('session module', () => {
 
           appProcess.stdout.on('data', data => { output += data; });
           appProcess.on('exit', () => {
-            resolve(output.replace(/(\r\n|\n|\r)/gm, ''));
+            resolve(output.replaceAll(/(\r\n|\n|\r)/gm, ''));
           });
         });
       };
@@ -252,16 +265,115 @@ describe('session module', () => {
     it('clears localstorage data', async () => {
       const w = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true } });
       await w.loadFile(path.join(fixtures, 'api', 'localstorage.html'));
-      const options = {
+      await w.webContents.session.clearStorageData({
         origin: 'file://',
         storages: ['localstorage'],
-        quotas: ['persistent']
-      };
-      await w.webContents.session.clearStorageData(options);
+        quotas: ['temporary']
+      });
       while (await w.webContents.executeJavaScript('localStorage.length') !== 0) {
         // The storage clear isn't instantly visible to the renderer, so keep
         // trying until it is.
       }
+    });
+  });
+
+  describe('shared dictionary APIs', () => {
+    // Shared dictionaries can only be created from real https websites, which we
+    // lack the APIs to fake in CI. If you're working on this code, you can run
+    // the real-internet tests below by uncommenting the `skip` below.
+    // In CI, we'll run simple tests here that ensure that the code in question doesn't
+    // crash, even if we expect it to not return any real dictionaries.
+    it('can get shared dictionary usage info', async () => {
+      expect(await session.defaultSession.getSharedDictionaryUsageInfo()).to.deep.equal([]);
+    });
+
+    it('can get shared dictionary info', async () => {
+      expect(await session.defaultSession.getSharedDictionaryInfo({
+        frameOrigin: 'https://compression-dictionary-transport-threejs-demo.glitch.me',
+        topFrameSite: 'https://compression-dictionary-transport-threejs-demo.glitch.me'
+      })).to.deep.equal([]);
+    });
+
+    it('can clear shared dictionary cache', async () => {
+      await session.defaultSession.clearSharedDictionaryCache();
+    });
+
+    it('can clear shared dictionary cache for isolation key', async () => {
+      await session.defaultSession.clearSharedDictionaryCacheForIsolationKey({
+        frameOrigin: 'https://compression-dictionary-transport-threejs-demo.glitch.me',
+        topFrameSite: 'https://compression-dictionary-transport-threejs-demo.glitch.me'
+      });
+    });
+  });
+
+  describe.skip('shared dictionary APIs (using a real website with real dictionaries)', () => {
+    const appPath = path.join(fixtures, 'api', 'shared-dictionary');
+    const runApp = (command: 'getSharedDictionaryInfo' | 'getSharedDictionaryUsageInfo' | 'clearSharedDictionaryCache' | 'clearSharedDictionaryCacheForIsolationKey') => {
+      return new Promise((resolve) => {
+        let output = '';
+
+        const appProcess = ChildProcess.spawn(
+          process.execPath,
+          [appPath, command]
+        );
+
+        appProcess.stdout.on('data', data => { output += data; });
+        appProcess.on('exit', () => {
+          const trimmedOutput = output.replaceAll(/(\r\n|\n|\r)/gm, '');
+
+          try {
+            resolve(JSON.parse(trimmedOutput));
+          } catch (e) {
+            console.error(`Error trying to deserialize ${trimmedOutput}`);
+            throw e;
+          }
+        });
+      });
+    };
+
+    afterEach(() => {
+      fs.rmSync(path.join(fixtures, 'api', 'shared-dictionary', 'user-data-dir'), { recursive: true });
+    });
+
+    it('can get shared dictionary usage info', async () => {
+      // In our fixture, this calls session.defaultSession.getSharedDictionaryUsageInfo()
+      expect(await runApp('getSharedDictionaryUsageInfo')).to.deep.equal([{
+        frameOrigin: 'https://compression-dictionary-transport-threejs-demo.glitch.me',
+        topFrameSite: 'https://compression-dictionary-transport-threejs-demo.glitch.me',
+        totalSizeBytes: 1198641
+      }]);
+    });
+
+    it('can get shared dictionary info', async () => {
+      // In our fixture, this calls session.defaultSession.getSharedDictionaryInfo({
+      //   frameOrigin: 'https://compression-dictionary-transport-threejs-demo.glitch.me',
+      //   topFrameSite: 'https://compression-dictionary-transport-threejs-demo.glitch.me'
+      // })
+      const sharedDictionaryInfo = await runApp('getSharedDictionaryInfo') as Electron.SharedDictionaryInfo[];
+
+      expect(sharedDictionaryInfo).to.have.lengthOf(1);
+      expect(sharedDictionaryInfo[0].match).to.not.be.undefined();
+      expect(sharedDictionaryInfo[0].hash).to.not.be.undefined();
+      expect(sharedDictionaryInfo[0].lastFetchTime).to.not.be.undefined();
+      expect(sharedDictionaryInfo[0].responseTime).to.not.be.undefined();
+      expect(sharedDictionaryInfo[0].expirationDuration).to.not.be.undefined();
+      expect(sharedDictionaryInfo[0].lastUsedTime).to.not.be.undefined();
+      expect(sharedDictionaryInfo[0].size).to.not.be.undefined();
+    });
+
+    it('can clear shared dictionary cache', async () => {
+      // In our fixture, this calls session.defaultSession.clearSharedDictionaryCache()
+      // followed by session.defaultSession.getSharedDictionaryUsageInfo()
+      expect(await runApp('clearSharedDictionaryCache')).to.deep.equal([]);
+    });
+
+    it('can clear shared dictionary cache for isolation key', async () => {
+      // In our fixture, this calls session.defaultSession.clearSharedDictionaryCacheForIsolationKey({
+      //   frameOrigin: 'https://compression-dictionary-transport-threejs-demo.glitch.me',
+      //   topFrameSite: 'https://compression-dictionary-transport-threejs-demo.glitch.me'
+      // })
+      // followed by session.defaultSession.getSharedDictionaryUsageInfo()
+      expect(await runApp('clearSharedDictionaryCacheForIsolationKey')).to.deep.equal([]);
     });
   });
 
@@ -420,33 +532,33 @@ describe('session module', () => {
     });
 
     it('allows configuring proxy settings with mode `direct`', async () => {
-      const config = { mode: 'direct' as any, proxyRules: 'http=myproxy:80' };
+      const config = { mode: 'direct' as const, proxyRules: 'http=myproxy:80' };
       await customSession.setProxy(config);
       const proxy = await customSession.resolveProxy('http://example.com/');
       expect(proxy).to.equal('DIRECT');
     });
 
     it('allows configuring proxy settings with mode `auto_detect`', async () => {
-      const config = { mode: 'auto_detect' as any };
+      const config = { mode: 'auto_detect' as const };
       await customSession.setProxy(config);
     });
 
     it('allows configuring proxy settings with mode `pac_script`', async () => {
-      const config = { mode: 'pac_script' as any };
+      const config = { mode: 'pac_script' as const };
       await customSession.setProxy(config);
       const proxy = await customSession.resolveProxy('http://example.com/');
       expect(proxy).to.equal('DIRECT');
     });
 
     it('allows configuring proxy settings with mode `fixed_servers`', async () => {
-      const config = { mode: 'fixed_servers' as any, proxyRules: 'http=myproxy:80' };
+      const config = { mode: 'fixed_servers' as const, proxyRules: 'http=myproxy:80' };
       await customSession.setProxy(config);
       const proxy = await customSession.resolveProxy('http://example.com/');
       expect(proxy).to.equal('PROXY myproxy:80');
     });
 
     it('allows configuring proxy settings with mode `system`', async () => {
-      const config = { mode: 'system' as any };
+      const config = { mode: 'system' as const };
       await customSession.setProxy(config);
     });
 
@@ -469,7 +581,7 @@ describe('session module', () => {
         res.end(pac);
       });
       const { url } = await listen(server);
-      const config = { mode: 'pac_script' as any, pacScript: url };
+      const config = { mode: 'pac_script' as const, pacScript: url };
       await customSession.setProxy(config);
       {
         const proxy = await customSession.resolveProxy('https://google.com');
@@ -746,6 +858,9 @@ describe('session module', () => {
           res.end('authenticated');
         }
       });
+      defer(() => {
+        server.close();
+      });
       const { port } = await listen(server);
       const fetch = (url: string) => new Promise((resolve, reject) => {
         const request = net.request({ url, session: ses });
@@ -788,6 +903,7 @@ describe('session module', () => {
     const contentDisposition = 'inline; filename="mock.pdf"';
     let port: number;
     let downloadServer: http.Server;
+
     before(async () => {
       downloadServer = http.createServer((req, res) => {
         res.writeHead(200, {
@@ -799,9 +915,11 @@ describe('session module', () => {
       });
       port = (await listen(downloadServer)).port;
     });
+
     after(async () => {
       await new Promise(resolve => downloadServer.close(resolve));
     });
+
     afterEach(closeAllWindows);
 
     const isPathEqual = (path1: string, path2: string) => {
@@ -825,180 +943,360 @@ describe('session module', () => {
       fs.unlinkSync(downloadFilePath);
     };
 
-    it('can download using session.downloadURL', (done) => {
-      session.defaultSession.once('will-download', function (e, item) {
+    describe('session.downloadURL', () => {
+      let server: http.Server;
+      afterEach(() => {
+        if (server) {
+          server.close();
+          server = null as unknown as http.Server;
+        }
+      });
+      it('can perform a download', async () => {
+        const willDownload = once(session.defaultSession, 'will-download');
+        session.defaultSession.downloadURL(`${url}:${port}`);
+        const [, item] = await willDownload;
         item.savePath = downloadFilePath;
-        item.on('done', function (e, state) {
-          try {
-            assertDownload(state, item);
-            done();
-          } catch (e) {
-            done(e);
+        const [, state] = await once(item, 'done');
+        assertDownload(state, item);
+      });
+
+      it('can perform a download with a valid auth header', async () => {
+        server = http.createServer((req, res) => {
+          const { authorization } = req.headers;
+          if (!authorization || authorization !== 'Basic i-am-an-auth-header') {
+            res.statusCode = 401;
+            res.setHeader('WWW-Authenticate', 'Basic realm="Restricted"');
+            res.end();
+          } else {
+            res.writeHead(200, {
+              'Content-Length': mockPDF.length,
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': req.url === '/?testFilename' ? 'inline' : contentDisposition
+            });
+            res.end(mockPDF);
           }
         });
-      });
-      session.defaultSession.downloadURL(`${url}:${port}`);
-    });
 
-    it('can download using WebContents.downloadURL', (done) => {
-      const w = new BrowserWindow({ show: false });
-      w.webContents.session.once('will-download', function (e, item) {
-        item.savePath = downloadFilePath;
-        item.on('done', function (e, state) {
-          try {
-            assertDownload(state, item);
-            done();
-          } catch (e) {
-            done(e);
-          }
-        });
-      });
-      w.webContents.downloadURL(`${url}:${port}`);
-    });
+        const { port } = await listen(server);
 
-    it('can download from custom protocols using WebContents.downloadURL', (done) => {
-      const protocol = session.defaultSession.protocol;
-      const handler = (ignoredError: any, callback: Function) => {
-        callback({ url: `${url}:${port}` });
-      };
-      protocol.registerHttpProtocol(protocolName, handler);
-      const w = new BrowserWindow({ show: false });
-      w.webContents.session.once('will-download', function (e, item) {
-        item.savePath = downloadFilePath;
-        item.on('done', function (e, state) {
-          try {
-            assertDownload(state, item, true);
-            done();
-          } catch (e) {
-            done(e);
-          }
-        });
-      });
-      w.webContents.downloadURL(`${protocolName}://item`);
-    });
-
-    it('can download using WebView.downloadURL', async () => {
-      const w = new BrowserWindow({ show: false, webPreferences: { webviewTag: true } });
-      await w.loadURL('about:blank');
-      function webviewDownload ({ fixtures, url, port }: {fixtures: string, url: string, port: string}) {
-        const webview = new (window as any).WebView();
-        webview.addEventListener('did-finish-load', () => {
-          webview.downloadURL(`${url}:${port}/`);
-        });
-        webview.src = `file://${fixtures}/api/blank.html`;
-        document.body.appendChild(webview);
-      }
-      const done: Promise<[string, Electron.DownloadItem]> = new Promise(resolve => {
-        w.webContents.session.once('will-download', function (e, item) {
-          item.savePath = downloadFilePath;
-          item.on('done', function (e, state) {
-            resolve([state, item]);
+        const downloadDone: Promise<Electron.DownloadItem> = new Promise((resolve) => {
+          session.defaultSession.once('will-download', (e, item) => {
+            item.savePath = downloadFilePath;
+            item.on('done', () => {
+              try {
+                resolve(item);
+              } catch { }
+            });
           });
         });
-      });
-      await w.webContents.executeJavaScript(`(${webviewDownload})(${JSON.stringify({ fixtures, url, port })})`);
-      const [state, item] = await done;
-      assertDownload(state, item);
-    });
 
-    it('can cancel download', (done) => {
-      const w = new BrowserWindow({ show: false });
-      w.webContents.session.once('will-download', function (e, item) {
-        item.savePath = downloadFilePath;
-        item.on('done', function (e, state) {
-          try {
-            expect(state).to.equal('cancelled');
-            expect(item.getFilename()).to.equal('mock.pdf');
-            expect(item.getMimeType()).to.equal('application/pdf');
-            expect(item.getReceivedBytes()).to.equal(0);
-            expect(item.getTotalBytes()).to.equal(mockPDF.length);
-            expect(item.getContentDisposition()).to.equal(contentDisposition);
-            done();
-          } catch (e) {
-            done(e);
+        session.defaultSession.downloadURL(`${url}:${port}`, {
+          headers: {
+            Authorization: 'Basic i-am-an-auth-header'
           }
         });
-        item.cancel();
+
+        const today = Math.floor(Date.now() / 1000);
+        const item = await downloadDone;
+        expect(item.getState()).to.equal('completed');
+        expect(item.getFilename()).to.equal('mock.pdf');
+        expect(item.getMimeType()).to.equal('application/pdf');
+        expect(item.getReceivedBytes()).to.equal(mockPDF.length);
+        expect(item.getTotalBytes()).to.equal(mockPDF.length);
+        expect(item.getPercentComplete()).to.equal(100);
+        expect(item.getCurrentBytesPerSecond()).to.equal(0);
+        expect(item.getContentDisposition()).to.equal(contentDisposition);
+
+        const start = item.getStartTime();
+        const end = item.getEndTime();
+        expect(start).to.be.greaterThan(today);
+        expect(end).to.be.greaterThan(start);
       });
-      w.webContents.downloadURL(`${url}:${port}/`);
-    });
 
-    it('can generate a default filename', function (done) {
-      if (process.env.APPVEYOR === 'True') {
-        // FIXME(alexeykuzmin): Skip the test.
-        // this.skip()
-        return done();
-      }
+      it('throws when called with invalid headers', () => {
+        expect(() => {
+          session.defaultSession.downloadURL(`${url}:${port}`, {
+            // @ts-ignore this line is intentionally incorrect
+            headers: 'i-am-a-bad-header'
+          });
+        }).to.throw(/Invalid value for headers - must be an object/);
+      });
 
-      const w = new BrowserWindow({ show: false });
-      w.webContents.session.once('will-download', function (e, item) {
-        item.savePath = downloadFilePath;
-        item.on('done', function () {
-          try {
-            expect(item.getFilename()).to.equal('download.pdf');
-            done();
-          } catch (e) {
-            done(e);
+      it('correctly handles a download with an invalid auth header', async () => {
+        server = http.createServer((req, res) => {
+          const { authorization } = req.headers;
+          if (!authorization || authorization !== 'Basic i-am-an-auth-header') {
+            res.statusCode = 401;
+            res.setHeader('WWW-Authenticate', 'Basic realm="Restricted"');
+            res.end();
+          } else {
+            res.writeHead(200, {
+              'Content-Length': mockPDF.length,
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': req.url === '/?testFilename' ? 'inline' : contentDisposition
+            });
+            res.end(mockPDF);
           }
         });
-        item.cancel();
+
+        const { port } = await listen(server);
+
+        const downloadFailed: Promise<Electron.DownloadItem> = new Promise((resolve) => {
+          session.defaultSession.once('will-download', (_, item) => {
+            item.savePath = downloadFilePath;
+            item.on('done', (e, state) => {
+              console.log(state);
+              try {
+                resolve(item);
+              } catch { }
+            });
+          });
+        });
+
+        session.defaultSession.downloadURL(`${url}:${port}`, {
+          headers: {
+            Authorization: 'wtf-is-this'
+          }
+        });
+
+        const item = await downloadFailed;
+        expect(item.getState()).to.equal('interrupted');
+        expect(item.getReceivedBytes()).to.equal(0);
+        expect(item.getTotalBytes()).to.equal(0);
       });
-      w.webContents.downloadURL(`${url}:${port}/?testFilename`);
     });
 
-    it('can set options for the save dialog', (done) => {
-      const filePath = path.join(__dirname, 'fixtures', 'mock.pdf');
-      const options = {
-        window: null,
-        title: 'title',
-        message: 'message',
-        buttonLabel: 'buttonLabel',
-        nameFieldLabel: 'nameFieldLabel',
-        defaultPath: '/',
-        filters: [{
-          name: '1', extensions: ['.1', '.2']
-        }, {
-          name: '2', extensions: ['.3', '.4', '.5']
-        }],
-        showsTagField: true,
-        securityScopedBookmarks: true
-      };
+    describe('webContents.downloadURL', () => {
+      let server: http.Server;
+      afterEach(() => {
+        if (server) {
+          server.close();
+          server = null as unknown as http.Server;
+        }
+      });
+      it('can perform a download', async () => {
+        const w = new BrowserWindow({ show: false });
+        const willDownload = once(w.webContents.session, 'will-download');
+        w.webContents.downloadURL(`${url}:${port}`);
+        const [, item] = await willDownload;
+        item.savePath = downloadFilePath;
+        const [, state] = await once(item, 'done');
+        assertDownload(state, item);
+      });
 
-      const w = new BrowserWindow({ show: false });
-      w.webContents.session.once('will-download', function (e, item) {
+      it('can perform a download with a valid auth header', async () => {
+        server = http.createServer((req, res) => {
+          const { authorization } = req.headers;
+          if (!authorization || authorization !== 'Basic i-am-an-auth-header') {
+            res.statusCode = 401;
+            res.setHeader('WWW-Authenticate', 'Basic realm="Restricted"');
+            res.end();
+          } else {
+            res.writeHead(200, {
+              'Content-Length': mockPDF.length,
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': req.url === '/?testFilename' ? 'inline' : contentDisposition
+            });
+            res.end(mockPDF);
+          }
+        });
+
+        const { port } = await listen(server);
+
+        const w = new BrowserWindow({ show: false });
+        const downloadDone: Promise<Electron.DownloadItem> = new Promise((resolve) => {
+          w.webContents.session.once('will-download', (e, item) => {
+            item.savePath = downloadFilePath;
+            item.on('done', () => {
+              try {
+                resolve(item);
+              } catch { }
+            });
+          });
+        });
+
+        w.webContents.downloadURL(`${url}:${port}`, {
+          headers: {
+            Authorization: 'Basic i-am-an-auth-header'
+          }
+        });
+
+        const item = await downloadDone;
+        expect(item.getState()).to.equal('completed');
+        expect(item.getFilename()).to.equal('mock.pdf');
+        expect(item.getMimeType()).to.equal('application/pdf');
+        expect(item.getReceivedBytes()).to.equal(mockPDF.length);
+        expect(item.getTotalBytes()).to.equal(mockPDF.length);
+        expect(item.getContentDisposition()).to.equal(contentDisposition);
+      });
+
+      it('throws when called with invalid headers', () => {
+        const w = new BrowserWindow({ show: false });
+        expect(() => {
+          w.webContents.downloadURL(`${url}:${port}`, {
+            // @ts-ignore this line is intentionally incorrect
+            headers: 'i-am-a-bad-header'
+          });
+        }).to.throw(/Invalid value for headers - must be an object/);
+      });
+
+      it('correctly handles a download and an invalid auth header', async () => {
+        server = http.createServer((req, res) => {
+          const { authorization } = req.headers;
+          if (!authorization || authorization !== 'Basic i-am-an-auth-header') {
+            res.statusCode = 401;
+            res.setHeader('WWW-Authenticate', 'Basic realm="Restricted"');
+            res.end();
+          } else {
+            res.writeHead(200, {
+              'Content-Length': mockPDF.length,
+              'Content-Type': 'application/pdf',
+              'Content-Disposition': req.url === '/?testFilename' ? 'inline' : contentDisposition
+            });
+            res.end(mockPDF);
+          }
+        });
+
+        const { port } = await listen(server);
+
+        const w = new BrowserWindow({ show: false });
+        const downloadFailed: Promise<Electron.DownloadItem> = new Promise((resolve) => {
+          w.webContents.session.once('will-download', (_, item) => {
+            item.savePath = downloadFilePath;
+            item.on('done', (e, state) => {
+              console.log(state);
+              try {
+                resolve(item);
+              } catch { }
+            });
+          });
+        });
+
+        w.webContents.downloadURL(`${url}:${port}`, {
+          headers: {
+            Authorization: 'wtf-is-this'
+          }
+        });
+
+        const item = await downloadFailed;
+        expect(item.getState()).to.equal('interrupted');
+        expect(item.getReceivedBytes()).to.equal(0);
+        expect(item.getTotalBytes()).to.equal(0);
+      });
+
+      it('can download from custom protocols', async () => {
+        const protocol = session.defaultSession.protocol;
+        const handler = (ignoredError: any, callback: Function) => {
+          callback({ url: `${url}:${port}` });
+        };
+        protocol.registerHttpProtocol(protocolName, handler);
+        const w = new BrowserWindow({ show: false });
+        const willDownload = once(w.webContents.session, 'will-download');
+        w.webContents.downloadURL(`${protocolName}://item`);
+        const [, item] = await willDownload;
+        item.savePath = downloadFilePath;
+        const [, state] = await once(item, 'done');
+        assertDownload(state, item, true);
+      });
+
+      it('can cancel download', async () => {
+        const w = new BrowserWindow({ show: false });
+        const willDownload = once(w.webContents.session, 'will-download');
+        w.webContents.downloadURL(`${url}:${port}/`);
+        const [, item] = await willDownload;
+        item.savePath = downloadFilePath;
+        const itemDone = once(item, 'done');
+        item.cancel();
+        const [, state] = await itemDone;
+        expect(state).to.equal('cancelled');
+        expect(item.getFilename()).to.equal('mock.pdf');
+        expect(item.getMimeType()).to.equal('application/pdf');
+        expect(item.getReceivedBytes()).to.equal(0);
+        expect(item.getTotalBytes()).to.equal(mockPDF.length);
+        expect(item.getContentDisposition()).to.equal(contentDisposition);
+      });
+
+      ifit(process.platform !== 'win32')('can generate a default filename', async () => {
+        const w = new BrowserWindow({ show: false });
+        const willDownload = once(w.webContents.session, 'will-download');
+        w.webContents.downloadURL(`${url}:${port}/?testFilename`);
+        const [, item] = await willDownload;
+        item.savePath = downloadFilePath;
+        const itemDone = once(item, 'done');
+        item.cancel();
+        await itemDone;
+        expect(item.getFilename()).to.equal('download.pdf');
+      });
+
+      it('can set options for the save dialog', async () => {
+        const filePath = path.join(__dirname, 'fixtures', 'mock.pdf');
+        const options = {
+          window: null,
+          title: 'title',
+          message: 'message',
+          buttonLabel: 'buttonLabel',
+          nameFieldLabel: 'nameFieldLabel',
+          defaultPath: '/',
+          filters: [{
+            name: '1', extensions: ['.1', '.2']
+          }, {
+            name: '2', extensions: ['.3', '.4', '.5']
+          }],
+          showsTagField: true,
+          securityScopedBookmarks: true
+        };
+
+        const w = new BrowserWindow({ show: false });
+        const willDownload = once(w.webContents.session, 'will-download');
+        w.webContents.downloadURL(`${url}:${port}`);
+        const [, item] = await willDownload;
         item.setSavePath(filePath);
         item.setSaveDialogOptions(options);
-        item.on('done', function () {
-          try {
-            expect(item.getSaveDialogOptions()).to.deep.equal(options);
-            done();
-          } catch (e) {
-            done(e);
-          }
-        });
+        const itemDone = once(item, 'done');
         item.cancel();
+        await itemDone;
+        expect(item.getSaveDialogOptions()).to.deep.equal(options);
       });
-      w.webContents.downloadURL(`${url}:${port}`);
-    });
 
-    describe('when a save path is specified and the URL is unavailable', () => {
-      it('does not display a save dialog and reports the done state as interrupted', (done) => {
-        const w = new BrowserWindow({ show: false });
-        w.webContents.session.once('will-download', function (e, item) {
+      describe('when a save path is specified and the URL is unavailable', () => {
+        it('does not display a save dialog and reports the done state as interrupted', async () => {
+          const w = new BrowserWindow({ show: false });
+          const willDownload = once(w.webContents.session, 'will-download');
+          w.webContents.downloadURL(`file://${path.join(__dirname, 'does-not-exist.txt')}`);
+          const [, item] = await willDownload;
           item.savePath = downloadFilePath;
           if (item.getState() === 'interrupted') {
             item.resume();
           }
-          item.on('done', function (e, state) {
-            try {
-              expect(state).to.equal('interrupted');
-              done();
-            } catch (e) {
-              done(e);
-            }
+          const [, state] = await once(item, 'done');
+          expect(state).to.equal('interrupted');
+        });
+      });
+    });
+
+    describe('WebView.downloadURL', () => {
+      it('can perform a download', async () => {
+        const w = new BrowserWindow({ show: false, webPreferences: { webviewTag: true } });
+        await w.loadURL('about:blank');
+        function webviewDownload ({ fixtures, url, port }: { fixtures: string, url: string, port: string }) {
+          const webview = new (window as any).WebView();
+          webview.addEventListener('did-finish-load', () => {
+            webview.downloadURL(`${url}:${port}/`);
+          });
+          webview.src = `file://${fixtures}/api/blank.html`;
+          document.body.appendChild(webview);
+        }
+        const done: Promise<[string, Electron.DownloadItem]> = new Promise(resolve => {
+          w.webContents.session.once('will-download', function (e, item) {
+            item.savePath = downloadFilePath;
+            item.on('done', function (e, state) {
+              resolve([state, item]);
+            });
           });
         });
-        w.webContents.downloadURL(`file://${path.join(__dirname, 'does-not-exist.txt')}`);
+        await w.webContents.executeJavaScript(`(${webviewDownload})(${JSON.stringify({ fixtures, url, port })})`);
+        const [state, item] = await done;
+        assertDownload(state, item);
       });
     });
   });
@@ -1033,6 +1331,9 @@ describe('session module', () => {
         const options = { root: fixtures };
         send(req, req.url!, options)
           .on('error', (error: any) => { throw error; }).pipe(res);
+      });
+      defer(() => {
+        rangeServer.close();
       });
       try {
         const { url } = await listen(rangeServer);
@@ -1133,7 +1434,7 @@ describe('session module', () => {
       await w.loadURL('https://myfakesite');
 
       const [, name] = await result;
-      expect(name).to.deep.equal('SecurityError');
+      expect(name).to.deep.equal('NotAllowedError');
     });
 
     it('successfully resolves when calling legacy getUserMedia', async () => {
@@ -1246,6 +1547,7 @@ describe('session module', () => {
       w.webContents.executeJavaScript(`
         var iframe = document.createElement('iframe');
         iframe.src = '${loadUrl}';
+        iframe.allow = 'clipboard-read';
         document.body.appendChild(iframe);
         null;
       `);
@@ -1312,7 +1614,7 @@ describe('session module', () => {
 
   describe('session-created event', () => {
     it('is emitted when a session is created', async () => {
-      const sessionCreated = once(app, 'session-created');
+      const sessionCreated = once(app, 'session-created') as Promise<[any, Session]>;
       const session1 = session.fromPartition('' + Math.random());
       const [session2] = await sessionCreated;
       expect(session1).to.equal(session2);
@@ -1399,6 +1701,126 @@ describe('session module', () => {
         disabledCipherSuites: [0x009C]
       });
       await expect(request()).to.be.rejectedWith(/ERR_SSL_VERSION_OR_CIPHER_MISMATCH/);
+    });
+  });
+
+  describe('ses.clearData()', () => {
+    afterEach(closeAllWindows);
+
+    // NOTE: This API clears more than localStorage, but localStorage is a
+    // convenient test target for this API
+    it('clears all data when no options supplied', async () => {
+      const w = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true } });
+      await w.loadFile(path.join(fixtures, 'api', 'localstorage.html'));
+
+      expect(await w.webContents.executeJavaScript('localStorage.length')).to.be.greaterThan(0);
+
+      await w.webContents.session.clearData();
+
+      expect(await w.webContents.executeJavaScript('localStorage.length')).to.equal(0);
+    });
+
+    it('clears all data when no options supplied, called twice in parallel', async () => {
+      const w = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true } });
+      await w.loadFile(path.join(fixtures, 'api', 'localstorage.html'));
+
+      expect(await w.webContents.executeJavaScript('localStorage.length')).to.be.greaterThan(0);
+
+      // This first call is not awaited immediately
+      const clearDataPromise = w.webContents.session.clearData();
+      await w.webContents.session.clearData();
+
+      expect(await w.webContents.executeJavaScript('localStorage.length')).to.equal(0);
+
+      // Await the first promise so it doesn't creep into another test
+      await clearDataPromise;
+    });
+
+    it('only clears specified data categories', async () => {
+      const w = new BrowserWindow({
+        show: false,
+        webPreferences: { nodeIntegration: true, contextIsolation: false }
+      });
+      await w.loadFile(
+        path.join(fixtures, 'api', 'localstorage-and-indexeddb.html')
+      );
+
+      const { webContents } = w;
+      const { session } = webContents;
+
+      await once(ipcMain, 'indexeddb-ready');
+
+      async function queryData (channel: string): Promise<string> {
+        const event = once(ipcMain, `result-${channel}`);
+        webContents.send(`get-${channel}`);
+        return (await event)[1];
+      }
+
+      // Data is in localStorage
+      await expect(queryData('localstorage')).to.eventually.equal('hello localstorage');
+      // Data is in indexedDB
+      await expect(queryData('indexeddb')).to.eventually.equal('hello indexeddb');
+
+      // Clear only indexedDB, not localStorage
+      await session.clearData({ dataTypes: ['indexedDB'] });
+
+      // The localStorage data should still be there
+      await expect(queryData('localstorage')).to.eventually.equal('hello localstorage');
+
+      // The indexedDB data should be gone
+      await expect(queryData('indexeddb')).to.eventually.be.undefined();
+    });
+
+    it('only clears the specified origins', async () => {
+      const w = new BrowserWindow({ show: false });
+      await w.loadURL('about:blank');
+
+      const { session } = w.webContents;
+      const { cookies } = session;
+
+      await Promise.all([
+        cookies.set({
+          url: 'https://example.com/',
+          name: 'testdotcom',
+          value: 'testdotcom'
+        }),
+        cookies.set({
+          url: 'https://example.org/',
+          name: 'testdotorg',
+          value: 'testdotorg'
+        })
+      ]);
+
+      await session.clearData({ origins: ['https://example.com'] });
+
+      expect((await cookies.get({ url: 'https://example.com/', name: 'testdotcom' })).length).to.equal(0);
+      expect((await cookies.get({ url: 'https://example.org/', name: 'testdotorg' })).length).to.be.greaterThan(0);
+    });
+
+    it('clears all except the specified origins', async () => {
+      const w = new BrowserWindow({ show: false });
+      await w.loadURL('about:blank');
+
+      const { session } = w.webContents;
+      const { cookies } = session;
+
+      await Promise.all([
+        cookies.set({
+          url: 'https://example.com/',
+          name: 'testdotcom',
+          value: 'testdotcom'
+        }),
+        cookies.set({
+          url: 'https://example.org/',
+          name: 'testdotorg',
+          value: 'testdotorg'
+        })
+      ]);
+
+      await session.clearData({ excludeOrigins: ['https://example.com'] });
+
+      expect((await cookies.get({ url: 'https://example.com/', name: 'testdotcom' })).length).to.be.greaterThan(0);
+      expect((await cookies.get({ url: 'https://example.org/', name: 'testdotorg' })).length).to.equal(0);
     });
   });
 });

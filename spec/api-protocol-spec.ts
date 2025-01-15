@@ -1,18 +1,23 @@
+import { protocol, webContents, WebContents, session, BrowserWindow, ipcMain, net } from 'electron/main';
+
 import { expect } from 'chai';
 import { v4 } from 'uuid';
-import { protocol, webContents, WebContents, session, BrowserWindow, ipcMain, net } from 'electron/main';
-import * as ChildProcess from 'child_process';
-import * as path from 'path';
-import * as url from 'url';
-import * as http from 'http';
-import * as fs from 'fs';
-import * as qs from 'querystring';
-import * as stream from 'stream';
-import { EventEmitter, once } from 'events';
-import { closeAllWindows, closeWindow } from './lib/window-helpers';
-import { WebmGenerator } from './lib/video-helpers';
+
+import * as ChildProcess from 'node:child_process';
+import { EventEmitter, once } from 'node:events';
+import * as fs from 'node:fs';
+import * as http from 'node:http';
+import * as path from 'node:path';
+import * as qs from 'node:querystring';
+import * as stream from 'node:stream';
+import * as streamConsumers from 'node:stream/consumers';
+import * as webStream from 'node:stream/web';
+import { setTimeout } from 'node:timers/promises';
+import * as url from 'node:url';
+
 import { listen, defer, ifit } from './lib/spec-helpers';
-import { setTimeout } from 'timers/promises';
+import { WebmGenerator } from './lib/video-helpers';
+import { closeAllWindows, closeWindow } from './lib/window-helpers';
 
 const fixturesPath = path.resolve(__dirname, 'fixtures');
 
@@ -104,7 +109,7 @@ describe('protocol module', () => {
         try {
           callback(text);
           callback('');
-        } catch (error) {
+        } catch {
           // Ignore error
         }
       });
@@ -263,7 +268,7 @@ describe('protocol module', () => {
         expect(r.headers).to.have.property('x-great-header', 'sogreat');
       });
 
-      it('can load iframes with custom protocols', (done) => {
+      it('can load iframes with custom protocols', async () => {
         registerFileProtocol('custom', (request, callback) => {
           const filename = request.url.substring(9);
           const p = path.join(__dirname, 'fixtures', 'pages', filename);
@@ -278,8 +283,9 @@ describe('protocol module', () => {
           }
         });
 
+        const loaded = once(ipcMain, 'loaded-iframe-custom-protocol');
         w.loadFile(path.join(__dirname, 'fixtures', 'pages', 'iframe-protocol.html'));
-        ipcMain.once('loaded-iframe-custom-protocol', () => done());
+        await loaded;
       });
 
       it('sends object as response', async () => {
@@ -557,7 +563,7 @@ describe('protocol module', () => {
         try {
           callback(text);
           callback('');
-        } catch (error) {
+        } catch {
           // Ignore error
         }
       });
@@ -646,7 +652,7 @@ describe('protocol module', () => {
       const { url } = await listen(server);
       interceptHttpProtocol('http', (request, callback) => {
         const data: Electron.ProtocolResponse = {
-          url: url,
+          url,
           method: 'POST',
           uploadData: {
             contentType: 'application/x-www-form-urlencoded',
@@ -907,7 +913,7 @@ describe('protocol module', () => {
     });
 
     it('allows CORS requests by default', async () => {
-      await allowsCORSRequests('cors', 200, new RegExp(''), () => {
+      await allowsCORSRequests('cors', 200, /(?:)/, () => {
         const { ipcRenderer } = require('electron');
         fetch('cors://myhost').then(function (response) {
           ipcRenderer.send('response', response.status);
@@ -971,7 +977,7 @@ describe('protocol module', () => {
         contextIsolation: false
       });
       const consoleMessages: string[] = [];
-      newContents.on('console-message', (e, level, message) => consoleMessages.push(message));
+      newContents.on('console-message', (e) => consoleMessages.push(e.message));
       try {
         newContents.loadURL(standardScheme + '://fake-host');
         const [, response] = await once(ipcMain, 'response');
@@ -1089,6 +1095,33 @@ describe('protocol module', () => {
     }
   });
 
+  describe('protocol.registerSchemesAsPrivileged codeCache', function () {
+    const temp = require('temp').track();
+    const appPath = path.join(fixturesPath, 'apps', 'refresh-page');
+
+    let w: BrowserWindow;
+    let codeCachePath: string;
+    beforeEach(async () => {
+      w = new BrowserWindow({ show: false });
+      codeCachePath = temp.path();
+    });
+
+    afterEach(async () => {
+      await closeWindow(w);
+      w = null as unknown as BrowserWindow;
+    });
+
+    it('code cache in custom protocol is disabled by default', async () => {
+      ChildProcess.spawnSync(process.execPath, [appPath, 'false', codeCachePath]);
+      expect(fs.readdirSync(path.join(codeCachePath, 'js')).length).to.equal(2);
+    });
+
+    it('codeCache:true enables codeCache in custom protocol', async () => {
+      ChildProcess.spawnSync(process.execPath, [appPath, 'true', codeCachePath]);
+      expect(fs.readdirSync(path.join(codeCachePath, 'js')).length).to.above(2);
+    });
+  });
+
   describe('handle', () => {
     afterEach(closeAllWindows);
 
@@ -1106,7 +1139,7 @@ describe('protocol module', () => {
           // In case of failure, make sure we unhandle. But we should succeed
           // :)
           protocol.unhandle('test-scheme');
-        } catch (_ignored) { /* ignore */ }
+        } catch { /* ignore */ }
       });
       const resp1 = await net.fetch('test-scheme://foo');
       expect(resp1.status).to.equal(200);
@@ -1114,11 +1147,32 @@ describe('protocol module', () => {
       await expect(net.fetch('test-scheme://foo')).to.eventually.be.rejectedWith(/ERR_UNKNOWN_URL_SCHEME/);
     });
 
-    it('receives requests to an existing scheme', async () => {
+    it('receives requests to the existing https scheme', async () => {
       protocol.handle('https', (req) => new Response('hello ' + req.url));
       defer(() => { protocol.unhandle('https'); });
       const body = await net.fetch('https://foo').then(r => r.text());
       expect(body).to.equal('hello https://foo/');
+    });
+
+    it('receives requests to the existing file scheme', (done) => {
+      const filePath = path.join(__dirname, 'fixtures', 'pages', 'a.html');
+
+      protocol.handle('file', (req) => {
+        let file;
+        if (process.platform === 'win32') {
+          file = `file:///${filePath.replaceAll('\\', '/')}`;
+        } else {
+          file = `file://${filePath}`;
+        }
+
+        if (req.url === file) done();
+        return new Response(req.url);
+      });
+
+      defer(() => { protocol.unhandle('file'); });
+
+      const w = new BrowserWindow();
+      w.loadFile(filePath);
     });
 
     it('receives requests to an existing scheme when navigating', async () => {
@@ -1141,6 +1195,30 @@ describe('protocol module', () => {
       defer(() => { protocol.unhandle('test-scheme'); });
       const body = await net.fetch('test-scheme://foo').then(r => r.text());
       expect(body).to.equal(text);
+    });
+
+    it('calls destroy on aborted body stream', async () => {
+      const abortController = new AbortController();
+
+      class TestStream extends stream.Readable {
+        _read () {
+          this.push('infinite data');
+
+          // Abort the request that reads from this stream.
+          abortController.abort();
+        }
+      };
+      const body = new TestStream();
+      protocol.handle('test-scheme', () => {
+        return new Response(stream.Readable.toWeb(body) as ReadableStream<ArrayBufferView>);
+      });
+      defer(() => { protocol.unhandle('test-scheme'); });
+
+      const res = net.fetch('test-scheme://foo', {
+        signal: abortController.signal
+      });
+      await expect(res).to.be.rejectedWith('This operation was aborted');
+      await expect(once(body, 'end')).to.be.rejectedWith('The operation was aborted');
     });
 
     it('accepts urls with no hostname in non-standard schemes', async () => {
@@ -1330,6 +1408,49 @@ describe('protocol module', () => {
       expect(body).to.equal(text);
     });
 
+    it('can receive stream request body asynchronously', async () => {
+      let done: any;
+      const requestReceived: Promise<Buffer[]> = new Promise(resolve => { done = resolve; });
+      protocol.handle('http-like', async (req) => {
+        const chunks = [];
+        for await (const chunk of (req.body as any)) {
+          chunks.push(chunk);
+        }
+        done(chunks);
+        return new Response('ok');
+      });
+      defer(() => { protocol.unhandle('http-like'); });
+      const w = new BrowserWindow({ show: false });
+      w.loadURL('about:blank');
+      const expectedHashChunks = await w.webContents.executeJavaScript(`
+        const dataStream = () =>
+          new ReadableStream({
+            async start(controller) {
+              for (let i = 0; i < 10; i++) { controller.enqueue(Array(1024 * 128).fill(+i).join("\\n")); }
+              controller.close();
+            },
+          }).pipeThrough(new TextEncoderStream());
+        fetch(
+          new Request("http-like://host", {
+            method: "POST",
+            body: dataStream(),
+            duplex: "half",
+          })
+        );
+        (async () => {
+          const chunks = []
+          for await (const chunk of dataStream()) {
+            chunks.push(chunk);
+          }
+          return chunks;
+        })()
+      `);
+      const expectedHash = Buffer.from(await crypto.subtle.digest('SHA-256', Buffer.concat(expectedHashChunks))).toString('hex');
+      const body = Buffer.concat(await requestReceived);
+      const actualHash = Buffer.from(await crypto.subtle.digest('SHA-256', Buffer.from(body))).toString('hex');
+      expect(actualHash).to.equal(expectedHash);
+    });
+
     it('can receive multi-part postData from loadURL', async () => {
       protocol.handle('test-scheme', (req) => new Response(req.body));
       defer(() => { protocol.unhandle('test-scheme'); });
@@ -1499,8 +1620,125 @@ describe('protocol module', () => {
       }
     });
 
+    it('does not emit undefined chunks into the request body stream when uploading a stream', async () => {
+      protocol.handle('cors', async (request) => {
+        expect(request.body).to.be.an.instanceOf(webStream.ReadableStream);
+        for await (const value of request.body as webStream.ReadableStream<Uint8Array>) {
+          expect(value).to.not.be.undefined();
+        }
+        return new Response(undefined, { status: 200 });
+      });
+      defer(() => { protocol.unhandle('cors'); });
+
+      await contents.loadFile(path.resolve(fixturesPath, 'pages', 'base-page.html'));
+      contents.on('console-message', (e) => console.log(e.message));
+      const ok = await contents.executeJavaScript(`(async () => {
+        function wait(milliseconds) {
+          return new Promise((resolve) => setTimeout(resolve, milliseconds));
+        }
+
+        const stream = new ReadableStream({
+          async start(controller) {
+            await wait(4);
+            controller.enqueue('This ');
+            await wait(4);
+            controller.enqueue('is ');
+            await wait(4);
+            controller.enqueue('a ');
+            await wait(4);
+            controller.enqueue('slow ');
+            await wait(4);
+            controller.enqueue('request.');
+            controller.close();
+          }
+        }).pipeThrough(new TextEncoderStream());
+        return (await fetch('cors://url.invalid', { method: 'POST', body: stream, duplex: 'half' })).ok;
+      })()`);
+      expect(ok).to.be.true();
+    });
+
+    it('does not emit undefined chunks into the request body stream when uploading a file', async () => {
+      protocol.handle('cors', async (request) => {
+        expect(request.body).to.be.an.instanceOf(webStream.ReadableStream);
+        for await (const value of request.body as webStream.ReadableStream<Uint8Array>) {
+          expect(value).to.not.be.undefined();
+        }
+        return new Response(undefined, { status: 200 });
+      });
+      defer(() => { protocol.unhandle('cors'); });
+
+      await contents.loadFile(path.resolve(fixturesPath, 'pages', 'file-input.html'));
+      const { debugger: debug } = contents;
+      debug.attach();
+      try {
+        const { root: { nodeId } } = await debug.sendCommand('DOM.getDocument');
+        const { nodeId: inputNodeId } = await debug.sendCommand('DOM.querySelector', { nodeId, selector: 'input' });
+        await debug.sendCommand('DOM.setFileInputFiles', {
+          files: [path.join(fixturesPath, 'cat-spin.mp4')],
+          nodeId: inputNodeId
+        });
+        const ok = await contents.executeJavaScript(`(async () => {
+          const formData = new FormData();
+          formData.append("data", document.getElementById("file").files[0]);
+          return (await fetch('cors://url.invalid', { method: 'POST', body: formData })).ok;
+        })()`);
+        expect(ok).to.be.true();
+      } finally {
+        debug.detach();
+      }
+    });
+
+    it('filters an illegal "origin: null" header', async () => {
+      protocol.handle('http', (req) => {
+        expect(new Headers(req.headers).get('origin')).to.not.equal('null');
+        return new Response();
+      });
+      defer(() => { protocol.unhandle('http'); });
+
+      const filePath = path.join(fixturesPath, 'pages', 'form-with-data.html');
+      await contents.loadFile(filePath);
+
+      const loadPromise = new Promise<void>((resolve, reject) => {
+        contents.once('did-finish-load', resolve);
+        contents.once('did-fail-load', (_, errorCode, errorDescription) =>
+          reject(new Error(`did-fail-load: ${errorCode} ${errorDescription}. See AssertionError for details.`))
+        );
+      });
+      await contents.executeJavaScript(`
+        const form = document.querySelector('form');
+        form.action = 'http://cors.invalid';
+        form.method = 'POST';
+        form.submit();
+      `);
+      await loadPromise;
+    });
+
+    it('does forward Blob chunks', async () => {
+      // we register the protocol on a separate session to validate the assumption
+      // that `getBlobData()` indeed returns the blob data from a global variable
+      const s = session.fromPartition('protocol-handle-forwards-blob-chunks');
+
+      s.protocol.handle('cors', async (request) => {
+        expect(request.body).to.be.an.instanceOf(webStream.ReadableStream);
+        return new Response(
+          `hello to ${await streamConsumers.text(request.body as webStream.ReadableStream<Uint8Array>)}`,
+          { status: 200 }
+        );
+      });
+      defer(() => { s.protocol.unhandle('cors'); });
+
+      const w = new BrowserWindow({ show: false, webPreferences: { session: s } });
+      await w.webContents.loadFile(path.resolve(fixturesPath, 'pages', 'base-page.html'));
+      const response = await w.webContents.executeJavaScript(`(async () => {
+        const body = new Blob(["it's-a ", 'me! ', 'Mario!'], { type: 'text/plain' });
+        return await (await fetch('cors://url.invalid', { method: 'POST', body })).text();
+      })()`);
+      expect(response).to.be.string('hello to it\'s-a me! Mario!');
+    });
+
     // TODO(nornagon): this test doesn't pass on Linux currently, investigate.
-    ifit(process.platform !== 'linux')('is fast', async () => {
+    // test is also flaky on CI on macOS so it is currently disabled there as well.
+    ifit(process.platform !== 'linux' && (!process.env.CI || process.platform !== 'darwin'))('is fast', async () => {
       // 128 MB of spaces.
       const chunk = new Uint8Array(128 * 1024 * 1024);
       chunk.fill(' '.charCodeAt(0));
@@ -1539,7 +1777,7 @@ describe('protocol module', () => {
         const end = Date.now();
         return end - begin;
       })();
-      expect(interceptedTime).to.be.lessThan(rawTime * 1.5);
+      expect(interceptedTime).to.be.lessThan(rawTime * 1.6);
     });
   });
 });

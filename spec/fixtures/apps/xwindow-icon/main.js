@@ -1,5 +1,6 @@
 const { app, BrowserWindow } = require('electron');
-const path = require('path');
+
+const path = require('node:path');
 
 app.whenReady().then(() => {
   const w = new BrowserWindow({

@@ -8,16 +8,22 @@
 #include <map>
 #include <vector>
 
-#include "base/functional/callback.h"
+#include "base/functional/callback_forward.h"
 #include "chrome/browser/extensions/global_shortcut_listener.h"
-#include "gin/handle.h"
+#include "extensions/common/extension_id.h"
 #include "gin/wrappable.h"
 #include "ui/base/accelerators/accelerator.h"
 
+namespace gin {
+template <typename T>
+class Handle;
+}  // namespace gin
+
 namespace electron::api {
 
-class GlobalShortcut : public extensions::GlobalShortcutListener::Observer,
-                       public gin::Wrappable<GlobalShortcut> {
+class GlobalShortcut final
+    : private extensions::GlobalShortcutListener::Observer,
+      public gin::Wrappable<GlobalShortcut> {
  public:
   static gin::Handle<GlobalShortcut> Create(v8::Isolate* isolate);
 
@@ -50,6 +56,8 @@ class GlobalShortcut : public extensions::GlobalShortcutListener::Observer,
 
   // GlobalShortcutListener::Observer implementation.
   void OnKeyPressed(const ui::Accelerator& accelerator) override;
+  void ExecuteCommand(const extensions::ExtensionId& extension_id,
+                      const std::string& command_id) override;
 
   AcceleratorCallbackMap accelerator_callback_map_;
 };

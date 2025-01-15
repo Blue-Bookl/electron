@@ -1,6 +1,6 @@
-const fs = require('fs');
-const path = require('path');
 const semver = require('semver');
+
+const fs = require('node:fs');
 
 const outputPath = process.argv[2];
 const currentVersion = process.argv[3];

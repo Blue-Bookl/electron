@@ -59,7 +59,7 @@ window.open('https://github.com', '_blank', 'top=500,left=200,frame=false,nodeIn
 * Non-standard features (that are not handled by Chromium or Electron) given in
   `features` will be passed to any registered `webContents`'s
   `did-create-window` event handler in the `options` argument.
-* `frameName` follows the specification of `windowName` located in the [native documentation](https://developer.mozilla.org/en-US/docs/Web/API/Window/open#parameters).
+* `frameName` follows the specification of `target` located in the [native documentation](https://developer.mozilla.org/en-US/docs/Web/API/Window/open#parameters).
 * When opening `about:blank`, the child window's [`WebPreferences`](structures/web-preferences.md) will be copied
   from the parent window, and there is no way to override it because Chromium
   skips browser side navigation in this case.
@@ -80,7 +80,7 @@ window will not close when the opener window closes. The default value is `false
 
 ### Native `Window` example
 
-```javascript
+```js
 // main.js
 const mainWindow = new BrowserWindow()
 
@@ -104,7 +104,7 @@ mainWindow.webContents.setWindowOpenHandler(({ url }) => {
 })
 ```
 
-```javascript
+```js
 // renderer process (mainWindow)
 const childWindow = window.open('', 'modal')
 childWindow.document.write('<h1>Hello</h1>')

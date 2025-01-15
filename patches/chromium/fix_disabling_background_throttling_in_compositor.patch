@@ -1,0 +1,82 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Michal Pichlinski <michal.pichlinski@openfin.co>
+Date: Thu, 15 Jun 2023 23:04:48 +0200
+Subject: allow disabling throttling in the `viz::DisplayScheduler` per
+ `ui::Compositor`
+
+In Chromium when the `viz::DisplayScheduler` is invisible it throttles
+its work by dropping frame draws and swaps.
+
+This patch allows disbling this throttling by preventing transition to
+invisible state of the `viz::DisplayScheduler` owned
+by the `ui::Compositor`.
+
+diff --git a/ui/compositor/compositor.cc b/ui/compositor/compositor.cc
+index b505f127b2e05e347f0bc55a8e6c2e07e645fa3e..41ca5c47b656b521f8d9cbf1e5fe7bc90f3e18e9 100644
+--- a/ui/compositor/compositor.cc
++++ b/ui/compositor/compositor.cc
+@@ -340,7 +340,8 @@ void Compositor::SetLayerTreeFrameSink(
+   if (display_private_) {
+     disabled_swap_until_resize_ = false;
+     display_private_->Resize(size());
+-    display_private_->SetDisplayVisible(host_->IsVisible());
++    // Invisible display is throttling itself.
++    display_private_->SetDisplayVisible(background_throttling_ ? host_->IsVisible() : true);
+     display_private_->SetDisplayColorSpaces(display_color_spaces_);
+     display_private_->SetDisplayColorMatrix(
+         gfx::SkM44ToTransform(display_color_matrix_));
+@@ -551,7 +552,9 @@ void Compositor::SetVisible(bool visible) {
+   // updated then. We need to call this even if the visibility hasn't changed,
+   // for the same reason.
+   if (display_private_)
+-    display_private_->SetDisplayVisible(visible);
++    // Invisible display is throttling itself.
++    display_private_->SetDisplayVisible(
++        background_throttling_ ? visible : true);
+ 
+   if (changed) {
+     observer_list_.Notify(&CompositorObserver::OnCompositorVisibilityChanged,
+@@ -1004,6 +1007,15 @@ void Compositor::MaybeUpdateObserveBeginFrame() {
+       host_begin_frame_observer_->GetBoundRemote());
+ }
+ 
++void Compositor::SetBackgroundThrottling(bool background_throttling_enabled) {
++  background_throttling_ = background_throttling_enabled;
++  if (display_private_) {
++    // Invisible display is throttling itself.
++    display_private_->SetDisplayVisible(
++        background_throttling_ ? host_->IsVisible() : true);
++  }
++}
++
+ #if BUILDFLAG(IS_CHROMEOS)
+ void Compositor::SetSeamlessRefreshRates(
+     const std::vector<float>& seamless_refresh_rates) {
+diff --git a/ui/compositor/compositor.h b/ui/compositor/compositor.h
+index 970768eaa311139d0b27f5be893d601e20052825..cc5c2a704e339713a796196805a2aa05206d5b2e 100644
+--- a/ui/compositor/compositor.h
++++ b/ui/compositor/compositor.h
+@@ -509,6 +509,10 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
+ 
+   const cc::LayerTreeSettings& GetLayerTreeSettings() const;
+ 
++  // Sets |background_throttling_| responsible for suspending drawing
++  // and switching frames.
++  void SetBackgroundThrottling(bool background_throttling_enabled);
++
+   size_t saved_events_metrics_count_for_testing() const {
+     return host_->saved_events_metrics_count_for_testing();
+   }
+@@ -657,6 +661,12 @@ class COMPOSITOR_EXPORT Compositor : public base::PowerSuspendObserver,
+   // See go/report-ux-metrics-at-painting for details.
+   bool animation_started_ = false;
+ 
++  // Background throttling is a default Chromium behaviour. It occurs
++  // when the |display_private_| is not visible by prevent drawing and swapping
++  // frames. When it is disabled we are keeping |display_private_| always
++  // visible in order to keep generating frames.
++  bool background_throttling_ = true;
++
+   TrackerId next_compositor_metrics_tracker_id_ = 1u;
+   struct TrackerState {
+     TrackerState();

@@ -4,7 +4,7 @@
 
 Accelerators are strings that can contain multiple modifiers and a single key code,
 combined by the `+` character, and are used to define keyboard shortcuts
-throughout your application.
+throughout your application. Accelerators are case insensitive.
 
 Examples:
 
@@ -15,7 +15,7 @@ Shortcuts are registered with the [`globalShortcut`](global-shortcut.md) module
 using the [`register`](global-shortcut.md#globalshortcutregisteraccelerator-callback)
 method, i.e.
 
-```javascript
+```js
 const { app, globalShortcut } = require('electron')
 
 app.whenReady().then(() => {
@@ -55,7 +55,7 @@ The `Super` (or `Meta`) key is mapped to the `Windows` key on Windows and Linux 
 * `0` to `9`
 * `A` to `Z`
 * `F1` to `F24`
-* Punctuation like `~`, `!`, `@`, `#`, `$`, etc.
+* Various Punctuation: `)`, `!`, `@`, `#`, `$`, `%`, `^`, `&`, `*`, `(`, `:`, `;`, `:`, `+`, `=`, `<`, `,`, `_`, `-`, `>`, `.`, `?`, `/`, `~`, `` ` ``, `{`, `]`, `[`, `|`, `\`, `}`, `"`
 * `Plus`
 * `Space`
 * `Tab`

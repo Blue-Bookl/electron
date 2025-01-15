@@ -5,10 +5,11 @@
 #include "electron/shell/renderer/electron_api_service_impl.h"
 
 #include <memory>
+#include <string_view>
+#include <tuple>
 #include <utility>
 #include <vector>
 
-#include "base/environment.h"
 #include "base/trace_event/trace_event.h"
 #include "gin/data_object_builder.h"
 #include "mojo/public/cpp/system/platform_handle.h"
@@ -19,10 +20,11 @@
 #include "shell/common/node_includes.h"
 #include "shell/common/options_switches.h"
 #include "shell/common/thread_restrictions.h"
-#include "shell/common/v8_value_serializer.h"
+#include "shell/common/v8_util.h"
 #include "shell/renderer/electron_render_frame_observer.h"
 #include "shell/renderer/renderer_client_base.h"
 #include "third_party/blink/public/mojom/frame/user_activation_notification_type.mojom-shared.h"
+#include "third_party/blink/public/platform/scheduler/web_agent_group_scheduler.h"
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_local_frame.h"
 #include "third_party/blink/public/web/web_message_port_converter.h"
@@ -31,7 +33,7 @@ namespace electron {
 
 namespace {
 
-const char kIpcKey[] = "ipcNative";
+constexpr std::string_view kIpcKey = "ipcNative";
 
 // Gets the private object under kIpcKey
 v8::Local<v8::Object> GetIpcObject(v8::Local<v8::Context> context) {
@@ -43,7 +45,7 @@ v8::Local<v8::Object> GetIpcObject(v8::Local<v8::Context> context) {
       global_object->GetPrivate(context, private_binding_key).ToLocalChecked();
   if (value.IsEmpty() || !value->IsObject()) {
     LOG(ERROR) << "Attempted to get the 'ipcNative' object but it was missing";
-    return v8::Local<v8::Object>();
+    return {};
   }
   return value->ToObject(context).ToLocalChecked();
 }
@@ -60,12 +62,10 @@ void InvokeIpcCallback(v8::Local<v8::Context> context,
 
   // Only set up the node::CallbackScope if there's a node environment.
   // Sandboxed renderers don't have a node environment.
-  node::Environment* env = node::Environment::GetCurrent(context);
   std::unique_ptr<node::CallbackScope> callback_scope;
-  if (env) {
-    node::async_context async_context = {};
-    callback_scope = std::make_unique<node::CallbackScope>(isolate, ipcNative,
-                                                           async_context);
+  if (node::Environment::GetCurrent(context)) {
+    callback_scope = std::make_unique<node::CallbackScope>(
+        isolate, ipcNative, node::async_context{0, 0});
   }
 
   auto callback_key = gin::ConvertToV8(isolate, callback_name)
@@ -81,8 +81,7 @@ void EmitIPCEvent(v8::Local<v8::Context> context,
                   bool internal,
                   const std::string& channel,
                   std::vector<v8::Local<v8::Value>> ports,
-                  v8::Local<v8::Value> args,
-                  int32_t sender_id) {
+                  v8::Local<v8::Value> args) {
   auto* isolate = context->GetIsolate();
 
   v8::HandleScope handle_scope(isolate);
@@ -92,8 +91,7 @@ void EmitIPCEvent(v8::Local<v8::Context> context,
 
   std::vector<v8::Local<v8::Value>> argv = {
       gin::ConvertToV8(isolate, internal), gin::ConvertToV8(isolate, channel),
-      gin::ConvertToV8(isolate, ports), args,
-      gin::ConvertToV8(isolate, sender_id)};
+      gin::ConvertToV8(isolate, ports), args};
 
   InvokeIpcCallback(context, "onMessage", argv);
 }
@@ -155,13 +153,12 @@ void ElectronApiServiceImpl::OnConnectionError() {
 
 void ElectronApiServiceImpl::Message(bool internal,
                                      const std::string& channel,
-                                     blink::CloneableMessage arguments,
-                                     int32_t sender_id) {
+                                     blink::CloneableMessage arguments) {
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   if (!frame)
     return;
 
-  v8::Isolate* isolate = blink::MainThreadIsolate();
+  v8::Isolate* isolate = frame->GetAgentGroupScheduler()->Isolate();
   v8::HandleScope handle_scope(isolate);
 
   v8::Local<v8::Context> context = renderer_client_->GetContext(frame, isolate);
@@ -169,7 +166,7 @@ void ElectronApiServiceImpl::Message(bool internal,
 
   v8::Local<v8::Value> args = gin::ConvertToV8(isolate, arguments);
 
-  EmitIPCEvent(context, internal, channel, {}, args, sender_id);
+  EmitIPCEvent(context, internal, channel, {}, args);
 }
 
 void ElectronApiServiceImpl::ReceivePostMessage(
@@ -179,7 +176,7 @@ void ElectronApiServiceImpl::ReceivePostMessage(
   if (!frame)
     return;
 
-  v8::Isolate* isolate = blink::MainThreadIsolate();
+  v8::Isolate* isolate = frame->GetAgentGroupScheduler()->Isolate();
   v8::HandleScope handle_scope(isolate);
 
   v8::Local<v8::Context> context = renderer_client_->GetContext(frame, isolate);
@@ -196,13 +193,16 @@ void ElectronApiServiceImpl::ReceivePostMessage(
 
   std::vector<v8::Local<v8::Value>> args = {message_value};
 
-  EmitIPCEvent(context, false, channel, ports, gin::ConvertToV8(isolate, args),
-               0);
+  EmitIPCEvent(context, false, channel, ports, gin::ConvertToV8(isolate, args));
 }
 
 void ElectronApiServiceImpl::TakeHeapSnapshot(
     mojo::ScopedHandle file,
     TakeHeapSnapshotCallback callback) {
+  blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
+  if (!frame)
+    return;
+
   ScopedAllowBlockingForElectron allow_blocking;
 
   base::ScopedPlatformFile platform_file;
@@ -214,8 +214,8 @@ void ElectronApiServiceImpl::TakeHeapSnapshot(
   }
   base::File base_file(std::move(platform_file));
 
-  bool success =
-      electron::TakeHeapSnapshot(blink::MainThreadIsolate(), &base_file);
+  v8::Isolate* isolate = frame->GetAgentGroupScheduler()->Isolate();
+  bool success = electron::TakeHeapSnapshot(isolate, &base_file);
 
   std::move(callback).Run(success);
 }

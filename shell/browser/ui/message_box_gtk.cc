@@ -4,10 +4,9 @@
 
 #include "shell/browser/ui/message_box.h"
 
-#include <map>
-
 #include "base/containers/contains.h"
-#include "base/functional/callback.h"
+#include "base/containers/flat_map.h"
+#include "base/functional/bind.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/raw_ptr_exclusion.h"
 #include "base/no_destructor.h"
@@ -18,7 +17,7 @@
 #include "shell/browser/native_window_observer.h"
 #include "shell/browser/native_window_views.h"
 #include "shell/browser/ui/gtk_util.h"
-#include "ui/base/glib/glib_signal.h"
+#include "ui/base/glib/scoped_gsignal.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gtk/gtk_ui.h"    // nogncheck
 #include "ui/gtk/gtk_util.h"  // nogncheck
@@ -42,12 +41,12 @@ MessageBoxSettings::~MessageBoxSettings() = default;
 namespace {
 
 // <ID, messageBox> map
-std::map<int, GtkWidget*>& GetDialogsMap() {
-  static base::NoDestructor<std::map<int, GtkWidget*>> dialogs;
+base::flat_map<int, GtkWidget*>& GetDialogsMap() {
+  static base::NoDestructor<base::flat_map<int, GtkWidget*>> dialogs;
   return *dialogs;
 }
 
-class GtkMessageBox : public NativeWindowObserver {
+class GtkMessageBox : private NativeWindowObserver {
  public:
   explicit GtkMessageBox(const MessageBoxSettings& settings)
       : id_(settings.id),
@@ -89,8 +88,10 @@ class GtkMessageBox : public NativeWindowObserver {
           gtk_message_dialog_get_message_area(GTK_MESSAGE_DIALOG(dialog_));
       GtkWidget* check_button =
           gtk_check_button_new_with_label(settings.checkbox_label.c_str());
-      g_signal_connect(check_button, "toggled",
-                       G_CALLBACK(OnCheckboxToggledThunk), this);
+      signals_.emplace_back(
+          check_button, "toggled",
+          base::BindRepeating(&GtkMessageBox::OnCheckboxToggled,
+                              base::Unretained(this)));
       gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(check_button),
                                    settings.checkbox_checked);
       gtk_container_add(GTK_CONTAINER(message_area), check_button);
@@ -100,11 +101,10 @@ class GtkMessageBox : public NativeWindowObserver {
     // Add buttons.
     GtkDialog* dialog = GTK_DIALOG(dialog_);
     if (settings.buttons.size() == 0) {
-      gtk_dialog_add_button(dialog, TranslateToStock(0, "OK"), 0);
+      gtk_dialog_add_button(dialog, TranslateToStock("OK"), 0);
     } else {
       for (size_t i = 0; i < settings.buttons.size(); ++i) {
-        gtk_dialog_add_button(dialog, TranslateToStock(i, settings.buttons[i]),
-                              i);
+        gtk_dialog_add_button(dialog, TranslateToStock(settings.buttons[i]), i);
       }
     }
     gtk_dialog_set_default_response(dialog, settings.default_id);
@@ -145,16 +145,20 @@ class GtkMessageBox : public NativeWindowObserver {
     }
   }
 
-  const char* TranslateToStock(int id, const std::string& text) {
+  static const char* TranslateToStock(const std::string& text) {
     const std::string lower = base::ToLowerASCII(text);
-    if (lower == "cancel")
+    if (lower == "cancel") {
       return gtk_util::GetCancelLabel();
-    if (lower == "no")
+    }
+    if (lower == "no") {
       return gtk_util::GetNoLabel();
-    if (lower == "ok")
+    }
+    if (lower == "ok") {
       return gtk_util::GetOkLabel();
-    if (lower == "yes")
+    }
+    if (lower == "yes") {
       return gtk_util::GetYesLabel();
+    }
     return text.c_str();
   }
 
@@ -172,24 +176,26 @@ class GtkMessageBox : public NativeWindowObserver {
   void RunAsynchronous(MessageBoxCallback callback) {
     callback_ = std::move(callback);
 
-    g_signal_connect(dialog_, "delete-event",
-                     G_CALLBACK(gtk_widget_hide_on_delete), nullptr);
-    g_signal_connect(dialog_, "response", G_CALLBACK(OnResponseDialogThunk),
-                     this);
+    signals_.emplace_back(dialog_, "delete-event",
+                          base::BindRepeating(gtk_widget_hide_on_delete));
+    signals_.emplace_back(dialog_, "response",
+                          base::BindRepeating(&GtkMessageBox::OnResponseDialog,
+                                              base::Unretained(this)));
     Show();
   }
 
+  // NativeWindowObserver
   void OnWindowClosed() override {
     parent_->RemoveObserver(this);
     parent_ = nullptr;
   }
 
-  CHROMEG_CALLBACK_1(GtkMessageBox, void, OnResponseDialog, GtkWidget*, int);
-  CHROMEG_CALLBACK_0(GtkMessageBox, void, OnCheckboxToggled, GtkWidget*);
+  void OnResponseDialog(GtkWidget* widget, int response);
+  void OnCheckboxToggled(GtkWidget* widget);
 
  private:
   // The id of the dialog.
-  absl::optional<int> id_;
+  std::optional<int> id_;
 
   // The id to return when the dialog is closed without pressing buttons.
   int cancel_id_ = 0;
@@ -199,6 +205,7 @@ class GtkMessageBox : public NativeWindowObserver {
   raw_ptr<NativeWindow> parent_;
   RAW_PTR_EXCLUSION GtkWidget* dialog_;
   MessageBoxCallback callback_;
+  std::vector<ScopedGSignal> signals_;
 };
 
 void GtkMessageBox::OnResponseDialog(GtkWidget* widget, int response) {

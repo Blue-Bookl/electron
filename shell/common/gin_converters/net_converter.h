@@ -5,14 +5,12 @@
 #ifndef ELECTRON_SHELL_COMMON_GIN_CONVERTERS_NET_CONVERTER_H_
 #define ELECTRON_SHELL_COMMON_GIN_CONVERTERS_NET_CONVERTER_H_
 
-#include <string>
 #include <utility>
 #include <vector>
 
 #include "gin/converter.h"
-#include "services/network/public/mojom/fetch_api.mojom.h"
+#include "services/network/public/mojom/host_resolver.mojom-forward.h"
 #include "services/network/public/mojom/host_resolver.mojom.h"
-#include "services/network/public/mojom/url_request.mojom.h"
 #include "shell/browser/net/cert_verifier_client.h"
 
 namespace net {
@@ -25,7 +23,8 @@ class HttpVersion;
 
 namespace network {
 struct ResourceRequest;
-}
+class ResourceRequestBody;
+}  // namespace network
 
 namespace gin {
 

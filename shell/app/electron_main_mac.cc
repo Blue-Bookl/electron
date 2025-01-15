@@ -5,11 +5,12 @@
 #include <cstdlib>
 #include <memory>
 
-#include "base/allocator/early_zone_registration_mac.h"
-#include "electron/buildflags/buildflags.h"
+#include "base/strings/cstring_view.h"
 #include "electron/fuses.h"
+#include "electron/mas.h"
 #include "shell/app/electron_library_main.h"
 #include "shell/app/uv_stdio_fix.h"
+#include "shell/common/electron_constants.h"
 
 #if defined(HELPER_EXECUTABLE) && !IS_MAS_BUILD()
 #include <mach-o/dyld.h>
@@ -28,9 +29,9 @@ void abort_report_np(const char* fmt, ...);
 
 namespace {
 
-bool IsEnvSet(const char* name) {
-  char* indicator = getenv(name);
-  return indicator && indicator[0] != '\0';
+[[nodiscard]] bool IsEnvSet(const base::cstring_view name) {
+  const char* const indicator = getenv(name.c_str());
+  return indicator && *indicator;
 }
 
 #if defined(HELPER_EXECUTABLE) && !IS_MAS_BUILD()
@@ -50,17 +51,15 @@ bool IsEnvSet(const char* name) {
 }  // namespace
 
 int main(int argc, char* argv[]) {
-  partition_alloc::EarlyMallocZoneRegistration();
   FixStdioStreams();
 
-  if (electron::fuses::IsRunAsNodeEnabled() &&
-      IsEnvSet("ELECTRON_RUN_AS_NODE")) {
+  if (electron::fuses::IsRunAsNodeEnabled() && IsEnvSet(electron::kRunAsNode)) {
     return ElectronInitializeICUandStartNode(argc, argv);
   }
 
 #if defined(HELPER_EXECUTABLE) && !IS_MAS_BUILD()
   uint32_t exec_path_size = 0;
-  int rv = _NSGetExecutablePath(NULL, &exec_path_size);
+  int rv = _NSGetExecutablePath(nullptr, &exec_path_size);
   if (rv != -1) {
     FatalError("_NSGetExecutablePath: get length failed.");
   }

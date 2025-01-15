@@ -9,15 +9,22 @@ production use cases.  This is unlikely to be upstreamed as the change
 is entirely in //chrome.
 
 diff --git a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc
-index 48b7a20c212578ba9055b781b5c05b312fa7e974..3ae8136e5c938be80df141f7ca582d974fb08eed 100644
+index 04ca1efa6037e6b20294d9b9b9c794356f0e2439..a484a8fb9c32a1ffe20c78afad1f7cf563b6fdca 100644
 --- a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc
 +++ b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.cc
-@@ -49,6 +49,9 @@ namespace {
+@@ -14,6 +14,7 @@
+ #include "base/functional/bind.h"
+ #include "base/lazy_instance.h"
+ #include "base/location.h"
++#include "base/no_destructor.h"
+ #include "base/notreached.h"
+ #include "base/observer_list.h"
+ #include "base/path_service.h"
+@@ -50,6 +51,8 @@ namespace {
  base::LazyInstance<GURL>::Leaky g_download_url_for_testing =
      LAZY_INSTANCE_INITIALIZER;
  
-+base::LazyInstance<GURL>::Leaky g_base_download_url_override =
-+    LAZY_INSTANCE_INITIALIZER;
++base::NoDestructor<GURL> g_base_download_url_override;
 +
  // Close the file.
  void CloseDictionary(base::File file) {
@@ -27,7 +34,7 @@ index 48b7a20c212578ba9055b781b5c05b312fa7e974..3ae8136e5c938be80df141f7ca582d97
  }
  
 +void SpellcheckHunspellDictionary::SetBaseDownloadURL(const GURL url) {
-+  g_base_download_url_override.Get() = url;
++  *g_base_download_url_override = url;
 +}
 +
  GURL SpellcheckHunspellDictionary::GetDictionaryURL() {
@@ -37,17 +44,17 @@ index 48b7a20c212578ba9055b781b5c05b312fa7e974..3ae8136e5c938be80df141f7ca582d97
    std::string bdict_file = dictionary_file_.path.BaseName().MaybeAsASCII();
    DCHECK(!bdict_file.empty());
  
-+  if (g_base_download_url_override.Get() != GURL())
-+    return GURL(g_base_download_url_override.Get().spec() + base::ToLowerASCII(bdict_file));
++  if (*g_base_download_url_override != GURL())
++    return GURL(g_base_download_url_override->spec() + base::ToLowerASCII(bdict_file));
 +
    static const char kDownloadServerUrl[] =
        "https://redirector.gvt1.com/edgedl/chrome/dict/";
  
 diff --git a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h
-index 386d321eb07ec1cda9475e7c502aac0eb99d19ba..23983aa547a8f4355f33c97fb6218bf00b791702 100644
+index def025dbffec3f44074604fcfb441b769886c3ab..459e8be9dcbf6d3ede156b57abcf9c9ede5587c7 100644
 --- a/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h
 +++ b/chrome/browser/spellchecker/spellcheck_hunspell_dictionary.h
-@@ -93,6 +93,8 @@ class SpellcheckHunspellDictionary
+@@ -96,6 +96,8 @@ class SpellcheckHunspellDictionary : public SpellcheckDictionary {
    // Tests use this method to set a custom URL for downloading dictionaries.
    static void SetDownloadURLForTesting(const GURL url);
  

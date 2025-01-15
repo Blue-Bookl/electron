@@ -1,10 +1,10 @@
-import { ipcRenderer } from 'electron/renderer';
 import { ipcRendererInternal } from '@electron/internal/renderer/ipc-renderer-internal';
-
+import type * as securityWarningsModule from '@electron/internal/renderer/security-warnings';
+import type * as webFrameInitModule from '@electron/internal/renderer/web-frame-init';
 import type * as webViewInitModule from '@electron/internal/renderer/web-view/web-view-init';
 import type * as windowSetupModule from '@electron/internal/renderer/window-setup';
-import type * as webFrameInitModule from '@electron/internal/renderer/web-frame-init';
-import type * as securityWarningsModule from '@electron/internal/renderer/security-warnings';
+
+import { ipcRenderer } from 'electron/renderer';
 
 const { mainFrame } = process._linkedBinding('electron_renderer_web_frame');
 const v8Util = process._linkedBinding('electron_common_v8_util');
@@ -17,13 +17,9 @@ const isWebView = mainFrame.getWebPreference('isWebView');
 // ElectronApiServiceImpl will look for the "ipcNative" hidden object when
 // invoking the 'onMessage' callback.
 v8Util.setHiddenValue(global, 'ipcNative', {
-  onMessage (internal: boolean, channel: string, ports: MessagePort[], args: any[], senderId: number) {
-    if (internal && senderId !== 0) {
-      console.error(`Message ${channel} sent by unexpected WebContents (${senderId})`);
-      return;
-    }
+  onMessage (internal: boolean, channel: string, ports: MessagePort[], args: any[]) {
     const sender = internal ? ipcRendererInternal : ipcRenderer;
-    sender.emit(channel, { sender, senderId, ports }, ...args);
+    sender.emit(channel, { sender, ports }, ...args);
   }
 });
 
@@ -53,6 +49,7 @@ if (process.isMainFrame) {
 }
 
 const { webFrameInit } = require('@electron/internal/renderer/web-frame-init') as typeof webFrameInitModule;
+
 webFrameInit();
 
 // Warn about security issues

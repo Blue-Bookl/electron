@@ -6,11 +6,11 @@
 #ifndef ELECTRON_SHELL_BROWSER_UI_INSPECTABLE_WEB_CONTENTS_H_
 #define ELECTRON_SHELL_BROWSER_UI_INSPECTABLE_WEB_CONTENTS_H_
 
-#include <map>
 #include <memory>
-#include <set>
 #include <string>
 
+#include "base/containers/flat_map.h"
+#include "base/containers/flat_set.h"
 #include "base/containers/span.h"
 #include "base/containers/unique_ptr_adapters.h"
 #include "base/memory/raw_ptr.h"
@@ -34,7 +34,7 @@ class InspectableWebContentsView;
 
 class InspectableWebContents
     : public content::DevToolsAgentHostClient,
-      public content::WebContentsObserver,
+      private content::WebContentsObserver,
       public content::WebContentsDelegate,
       public DevToolsEmbedderMessageDispatcher::Delegate {
  public:
@@ -55,13 +55,15 @@ class InspectableWebContents
 
   void SetDelegate(InspectableWebContentsDelegate* delegate);
   InspectableWebContentsDelegate* GetDelegate() const;
-  bool IsGuest() const;
+  [[nodiscard]] bool is_guest() const { return is_guest_; }
   void ReleaseWebContents();
   void SetDevToolsWebContents(content::WebContents* devtools);
   void SetDockState(const std::string& state);
+  void SetDevToolsTitle(const std::u16string& title);
   void ShowDevTools(bool activate);
   void CloseDevTools();
   bool IsDevToolsViewShowing();
+  std::u16string GetDevToolsTitle();
   void AttachTo(scoped_refptr<content::DevToolsAgentHost>);
   void Detach();
   void CallClientFunction(
@@ -74,7 +76,9 @@ class InspectableWebContents
   void InspectElement(int x, int y);
 
   // Return the last position and size of devtools window.
-  gfx::Rect GetDevToolsBounds() const;
+  [[nodiscard]] const gfx::Rect& dev_tools_bounds() const {
+    return devtools_bounds_;
+  }
   void SaveDevToolsBounds(const gfx::Rect& bounds);
 
   // Return the last set zoom level of devtools window.
@@ -87,7 +91,7 @@ class InspectableWebContents
   void CloseWindow() override;
   void LoadCompleted() override;
   void SetInspectedPageBounds(const gfx::Rect& rect) override;
-  void InspectElementCompleted() override;
+  void InspectElementCompleted() override {}
   void InspectedURLChanged(const std::string& url) override;
   void LoadNetworkResource(DispatchCallback callback,
                            const std::string& url,
@@ -95,17 +99,19 @@ class InspectableWebContents
                            int stream_id) override;
   void SetIsDocked(DispatchCallback callback, bool is_docked) override;
   void OpenInNewTab(const std::string& url) override;
+  void OpenSearchResultsInNewTab(const std::string& query) override;
   void ShowItemInFolder(const std::string& file_system_path) override;
   void SaveToFile(const std::string& url,
                   const std::string& content,
-                  bool save_as) override;
+                  bool save_as,
+                  bool is_base64) override;
   void AppendToFile(const std::string& url,
                     const std::string& content) override;
   void RequestFileSystems() override;
   void AddFileSystem(const std::string& type) override;
   void RemoveFileSystem(const std::string& file_system_path) override;
   void UpgradeDraggedFileSystemPermissions(
-      const std::string& file_system_url) override;
+      const std::string& file_system_url) override {}
   void IndexPath(int index_request_id,
                  const std::string& file_system_path,
                  const std::string& excluded_folders) override;
@@ -113,9 +119,9 @@ class InspectableWebContents
   void SearchInPath(int search_request_id,
                     const std::string& file_system_path,
                     const std::string& query) override;
-  void SetWhitelistedShortcuts(const std::string& message) override;
+  void SetWhitelistedShortcuts(const std::string& message) override {}
   void SetEyeDropperActive(bool active) override;
-  void ShowCertificateViewer(const std::string& cert_chain) override;
+  void ShowCertificateViewer(const std::string& cert_chain) override {}
   void ZoomIn() override;
   void ZoomOut() override;
   void ResetZoom() override;
@@ -124,15 +130,18 @@ class InspectableWebContents
       bool port_forwarding_enabled,
       const std::string& port_forwarding_config,
       bool network_discovery_enabled,
-      const std::string& network_discovery_config) override;
-  void SetDevicesUpdatesEnabled(bool enabled) override;
-  void PerformActionOnRemotePage(const std::string& page_id,
-                                 const std::string& action) override;
+      const std::string& network_discovery_config) override {}
+  void SetDevicesUpdatesEnabled(bool enabled) override {}
   void OpenRemotePage(const std::string& browser_id,
-                      const std::string& url) override;
-  void OpenNodeFrontend() override;
+                      const std::string& url) override {}
+  void OpenNodeFrontend() override {}
   void DispatchProtocolMessageFromDevToolsFrontend(
       const std::string& message) override;
+  void RecordCountHistogram(const std::string& name,
+                            int sample,
+                            int min,
+                            int exclusive_max,
+                            int buckets) override {}
   void SendJsonRequest(DispatchCallback callback,
                        const std::string& browser_id,
                        const std::string& url) override;
@@ -146,7 +155,8 @@ class InspectableWebContents
   void RemovePreference(const std::string& name) override;
   void ClearPreferences() override;
   void GetSyncInformation(DispatchCallback callback) override;
-  void ConnectionReady() override;
+  void GetHostConfig(DispatchCallback callback) override;
+  void ConnectionReady() override {}
   void RegisterExtensionsAPI(const std::string& origin,
                              const std::string& script) override;
   void Reattach(DispatchCallback callback) override;
@@ -158,10 +168,22 @@ class InspectableWebContents
   void RecordPerformanceHistogram(const std::string& name,
                                   double duration) override {}
   void RecordUserMetricsAction(const std::string& name) override {}
+  void RecordImpression(const ImpressionEvent& event) override {}
+  void RecordResize(const ResizeEvent& event) override {}
+  void RecordClick(const ClickEvent& event) override {}
+  void RecordHover(const HoverEvent& event) override {}
+  void RecordDrag(const DragEvent& event) override {}
+  void RecordChange(const ChangeEvent& event) override {}
+  void RecordKeyDown(const KeyDownEvent& event) override {}
   void ShowSurvey(DispatchCallback callback,
                   const std::string& trigger) override {}
   void CanShowSurvey(DispatchCallback callback,
                      const std::string& trigger) override {}
+  void DoAidaConversation(DispatchCallback callback,
+                          const std::string& request,
+                          int stream_id) override {}
+  void RegisterAidaClientEvent(DispatchCallback callback,
+                               const std::string& request) override {}
 
   // content::DevToolsFrontendHostDelegate:
   void HandleMessageFromDevToolsFrontend(base::Value::Dict message);
@@ -169,7 +191,7 @@ class InspectableWebContents
   // content::DevToolsAgentHostClient:
   void DispatchProtocolMessage(content::DevToolsAgentHost* agent_host,
                                base::span<const uint8_t> message) override;
-  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override;
+  void AgentHostClosed(content::DevToolsAgentHost* agent_host) override {}
 
   // content::WebContentsObserver:
   void RenderFrameHostChanged(content::RenderFrameHost* old_host,
@@ -184,8 +206,11 @@ class InspectableWebContents
 
   // content::WebContentsDelegate:
   bool HandleKeyboardEvent(content::WebContents*,
-                           const content::NativeWebKeyboardEvent&) override;
+                           const input::NativeWebKeyboardEvent&) override;
   void CloseContents(content::WebContents* source) override;
+  std::unique_ptr<content::EyeDropper> OpenEyeDropper(
+      content::RenderFrameHost* frame,
+      content::EyeDropperListener* listener) override;
   void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       scoped_refptr<content::FileSelectListener> listener,
                       const blink::mojom::FileChooserParams& params) override;
@@ -202,6 +227,7 @@ class InspectableWebContents
   gfx::Rect devtools_bounds_;
   bool can_dock_ = true;
   std::string dock_state_;
+  std::u16string devtools_title_;
   bool activate_ = true;
 
   raw_ptr<InspectableWebContentsDelegate> delegate_ =
@@ -227,11 +253,12 @@ class InspectableWebContents
       embedder_message_dispatcher_;
 
   class NetworkResourceLoader;
-  std::set<std::unique_ptr<NetworkResourceLoader>, base::UniquePtrComparator>
+  base::flat_set<std::unique_ptr<NetworkResourceLoader>,
+                 base::UniquePtrComparator>
       loaders_;
 
-  using ExtensionsAPIs = std::map<std::string, std::string>;
-  ExtensionsAPIs extensions_api_;
+  // origin -> script
+  base::flat_map<std::string, std::string> extensions_api_;
 
   // Contains the set of synced settings.
   // The DevTools frontend *must* call `Register` for each setting prior to

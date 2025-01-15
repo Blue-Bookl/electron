@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "shell/browser/native_window_views.h"
 #include "shell/browser/ui/win/electron_desktop_window_tree_host_win.h"
 #include "ui/views/corewm/tooltip_controller.h"
 #include "ui/wm/public/tooltip_client.h"
@@ -29,6 +30,16 @@ void ElectronDesktopNativeWidgetAura::InitNativeWidget(
   params.desktop_window_tree_host = desktop_window_tree_host_;
   views::DesktopNativeWidgetAura::InitNativeWidget(std::move(params));
 }
+
+#if BUILDFLAG(IS_WIN)
+void ElectronDesktopNativeWidgetAura::OnSizeConstraintsChanged() {
+  views::DesktopNativeWidgetAura::OnSizeConstraintsChanged();
+
+  // OnSizeConstraintsChanged can remove thick frame depending from
+  // resizable state, so add it if needed.
+  native_window_view_->UpdateThickFrame();
+}
+#endif
 
 void ElectronDesktopNativeWidgetAura::Activate() {
   // Activate can cause the focused window to be blurred so only

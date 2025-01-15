@@ -1,16 +1,24 @@
+import { ipcMain, BrowserWindow } from 'electron/main';
+
 import { expect } from 'chai';
-import * as path from 'path';
-import { ipcMain, BrowserWindow, WebContents, WebPreferences, webContents } from 'electron/main';
+
+import { once } from 'node:events';
+
 import { closeWindow } from './lib/window-helpers';
-import { once } from 'events';
 
 describe('ipcRenderer module', () => {
-  const fixtures = path.join(__dirname, 'fixtures');
-
   let w: BrowserWindow;
   before(async () => {
-    w = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: true, contextIsolation: false } });
+    w = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        nodeIntegration: true,
+        nodeIntegrationInSubFrames: true,
+        contextIsolation: false
+      }
+    });
     await w.loadURL('about:blank');
+    w.webContents.on('console-message', (event, ...args) => console.error(...args));
   });
   after(async () => {
     await closeWindow(w);
@@ -62,7 +70,7 @@ describe('ipcRenderer module', () => {
     it('does not crash when sending external objects', async () => {
       await expect(w.webContents.executeJavaScript(`{
         const { ipcRenderer } = require('electron')
-        const http = require('http')
+        const http = require('node:http')
 
         const request = http.request({ port: 5000, hostname: '127.0.0.1', method: 'GET', path: '/' })
         const stream = request.agent.sockets['127.0.0.1:5000:'][0]._handle._externalStream
@@ -84,8 +92,8 @@ describe('ipcRenderer module', () => {
       }`);
 
       const child = { hello: 'world' };
-      const foo = { name: 'foo', child: child };
-      const bar = { name: 'bar', child: child };
+      const foo = { name: 'foo', child };
+      const bar = { name: 'bar', child };
       const array = [foo, bar];
 
       const [, arrayValue, fooValue, barValue, childValue] = await once(ipcMain, 'message');
@@ -128,56 +136,44 @@ describe('ipcRenderer module', () => {
     });
   });
 
-  describe('sendTo()', () => {
-    const generateSpecs = (description: string, webPreferences: WebPreferences) => {
-      describe(description, () => {
-        let contents: WebContents;
-        const payload = 'Hello World!';
-
-        before(async () => {
-          contents = (webContents as typeof ElectronInternal.WebContents).create({
-            preload: path.join(fixtures, 'module', 'preload-ipc-ping-pong.js'),
-            ...webPreferences
-          });
-
-          await contents.loadURL('about:blank');
-        });
-
-        after(() => {
-          contents.destroy();
-          contents = null as unknown as WebContents;
-        });
-
-        it('sends message to WebContents', async () => {
-          const data = await w.webContents.executeJavaScript(`new Promise(resolve => {
-            const { ipcRenderer } = require('electron')
-            ipcRenderer.sendTo(${contents.id}, 'ping', ${JSON.stringify(payload)})
-            ipcRenderer.once('pong', (event, data) => resolve(data))
-          })`);
-          expect(data).to.equal(payload);
-        });
-
-        it('sends message on channel with non-ASCII characters to WebContents', async () => {
-          const data = await w.webContents.executeJavaScript(`new Promise(resolve => {
-            const { ipcRenderer } = require('electron')
-            ipcRenderer.sendTo(${contents.id}, 'ping-æøåü', ${JSON.stringify(payload)})
-            ipcRenderer.once('pong-æøåü', (event, data) => resolve(data))
-          })`);
-          expect(data).to.equal(payload);
-        });
-      });
-    };
-
-    generateSpecs('without sandbox', {});
-    generateSpecs('with sandbox', { sandbox: true });
-    generateSpecs('with contextIsolation', { contextIsolation: true });
-    generateSpecs('with contextIsolation + sandbox', { contextIsolation: true, sandbox: true });
-  });
-
   describe('ipcRenderer.on', () => {
     it('is not used for internals', async () => {
       const result = await w.webContents.executeJavaScript(`
         require('electron').ipcRenderer.eventNames()
+      `);
+      expect(result).to.deep.equal([]);
+    });
+  });
+
+  describe('ipcRenderer.removeAllListeners', () => {
+    it('removes only the given channel', async () => {
+      const result = await w.webContents.executeJavaScript(`
+        (() => {
+          const { ipcRenderer } = require('electron');
+
+          ipcRenderer.on('channel1', () => {});
+          ipcRenderer.on('channel2', () => {});
+
+          ipcRenderer.removeAllListeners('channel1');
+
+          return ipcRenderer.eventNames();
+        })()
+      `);
+      expect(result).to.deep.equal(['channel2']);
+    });
+
+    it('removes all channels if no channel is specified', async () => {
+      const result = await w.webContents.executeJavaScript(`
+        (() => {
+          const { ipcRenderer } = require('electron');
+
+          ipcRenderer.on('channel1', () => {});
+          ipcRenderer.on('channel2', () => {});
+
+          ipcRenderer.removeAllListeners();
+
+          return ipcRenderer.eventNames();
+        })()
       `);
       expect(result).to.deep.equal([]);
     });

@@ -4,36 +4,31 @@
 
 #include "shell/browser/usb/usb_chooser_context.h"
 
-#include <memory>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 #include "base/containers/contains.h"
 #include "base/functional/bind.h"
-#include "base/observer_list.h"
-#include "base/strings/string_number_conversions.h"
-#include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
-#include "base/strings/utf_string_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/values.h"
-#include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "content/public/browser/device_service.h"
 #include "services/device/public/cpp/usb/usb_ids.h"
 #include "services/device/public/mojom/usb_device.mojom.h"
 #include "shell/browser/api/electron_api_session.h"
+#include "shell/browser/electron_browser_context.h"
 #include "shell/browser/electron_permission_manager.h"
 #include "shell/browser/web_contents_permission_helper.h"
 #include "shell/common/electron_constants.h"
 #include "shell/common/gin_converters/usb_device_info_converter.h"
-#include "shell/common/node_includes.h"
+#include "shell/common/gin_helper/dictionary.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
-constexpr char kDeviceNameKey[] = "productName";
-constexpr char kDeviceIdKey[] = "deviceId";
+constexpr std::string_view kDeviceNameKey = "productName";
+constexpr std::string_view kDeviceIdKey = "deviceId";
 constexpr int kUsbClassMassStorage = 0x08;
 
 bool CanStorePersistentEntry(const device::mojom::UsbDeviceInfo& device_info) {
@@ -68,14 +63,6 @@ bool ShouldExposeDevice(const device::mojom::UsbDeviceInfo& device_info) {
 
 namespace electron {
 
-void UsbChooserContext::DeviceObserver::OnDeviceAdded(
-    const device::mojom::UsbDeviceInfo& device_info) {}
-
-void UsbChooserContext::DeviceObserver::OnDeviceRemoved(
-    const device::mojom::UsbDeviceInfo& device_info) {}
-
-void UsbChooserContext::DeviceObserver::OnDeviceManagerConnectionError() {}
-
 UsbChooserContext::UsbChooserContext(ElectronBrowserContext* context)
     : browser_context_(context) {}
 
@@ -85,7 +72,7 @@ base::Value UsbChooserContext::DeviceInfoToValue(
   base::Value::Dict device_value;
   device_value.Set(kDeviceNameKey, device_info.product_name
                                        ? *device_info.product_name
-                                       : base::StringPiece16());
+                                       : std::u16string_view());
   device_value.Set(kDeviceVendorIdKey, device_info.vendor_id);
   device_value.Set(kDeviceProductIdKey, device_info.product_id);
 
@@ -204,8 +191,7 @@ void UsbChooserContext::RevokeObjectPermissionInternal(
   if (session) {
     v8::Isolate* isolate = JavascriptEnvironment::GetIsolate();
     v8::HandleScope scope(isolate);
-    gin_helper::Dictionary details =
-        gin_helper::Dictionary::CreateEmpty(isolate);
+    auto details = gin_helper::Dictionary::CreateEmpty(isolate);
     details.Set("device", object);
     details.Set("origin", origin.Serialize());
     session->Emit("usb-device-revoked", details);

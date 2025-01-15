@@ -10,6 +10,7 @@
 #include "third_party/blink/public/common/input/web_input_event.h"
 #include "third_party/blink/public/common/messaging/cloneable_message.h"
 #include "third_party/blink/public/common/web_cache/web_cache_resource_type_stats.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom-forward.h"
 #include "third_party/blink/public/mojom/loader/referrer.mojom-forward.h"
 
 namespace blink {
@@ -80,10 +81,10 @@ struct Converter<blink::mojom::ContextMenuDataMediaType> {
 };
 
 template <>
-struct Converter<blink::mojom::ContextMenuDataInputFieldType> {
+struct Converter<std::optional<blink::mojom::FormControlType>> {
   static v8::Local<v8::Value> ToV8(
       v8::Isolate* isolate,
-      const blink::mojom::ContextMenuDataInputFieldType& in);
+      const std::optional<blink::mojom::FormControlType>& in);
 };
 
 template <>
@@ -124,6 +125,12 @@ struct Converter<blink::CloneableMessage> {
   static bool FromV8(v8::Isolate* isolate,
                      v8::Local<v8::Value> val,
                      blink::CloneableMessage* out);
+};
+
+template <>
+struct Converter<blink::mojom::ConsoleMessageLevel> {
+  static v8::Local<v8::Value> ToV8(v8::Isolate* isolate,
+                                   const blink::mojom::ConsoleMessageLevel& in);
 };
 
 v8::Local<v8::Value> EditFlagsToV8(v8::Isolate* isolate, int editFlags);
