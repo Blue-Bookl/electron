@@ -822,8 +822,7 @@ WebContents::WebContents(v8::Isolate* isolate,
   // Whether to enable DevTools.
   options.Get("devTools", &enable_devtools_);
 
-  bool initially_shown = true;
-  options.Get(options::kShow, &initially_shown);
+  const bool initially_shown = options.ValueOrDefault(options::kShow, true);
 
   // Obtain the session.
   std::string partition;
@@ -1173,6 +1172,7 @@ void WebContents::WebContentsCreatedWithFullParams(
 }
 
 bool WebContents::IsWebContentsCreationOverridden(
+    content::RenderFrameHost* opener,
     content::SiteInstance* source_site_instance,
     content::mojom::WindowContainerType window_container_type,
     const GURL& opener_url,
@@ -1355,6 +1355,12 @@ bool WebContents::PlatformHandleKeyboardEvent(
   return false;
 }
 #endif
+
+bool WebContents::PreHandleMouseEvent(content::WebContents* source,
+                                      const blink::WebMouseEvent& event) {
+  // |true| means that the event should be prevented.
+  return Emit("before-mouse-event", event);
+}
 
 content::KeyboardEventProcessingResult WebContents::PreHandleKeyboardEvent(
     content::WebContents* source,
@@ -2007,13 +2013,8 @@ void WebContents::ReadyToCommitNavigation(
   // Don't focus content in an inactive window.
   if (!owner_window())
     return;
-#if BUILDFLAG(IS_MAC)
   if (!owner_window()->IsActive())
     return;
-#else
-  if (!owner_window()->widget()->IsActive())
-    return;
-#endif
   // Don't focus content after subframe navigations.
   if (!navigation_handle->IsInMainFrame())
     return;
@@ -2152,8 +2153,11 @@ void WebContents::DevToolsOpened() {
   // Inherit owner window in devtools when it doesn't have one.
   auto* devtools = inspectable_web_contents_->GetDevToolsWebContents();
   bool has_window = devtools->GetUserData(NativeWindowRelay::UserDataKey());
-  if (owner_window() && !has_window)
+  if (owner_window_ && !has_window) {
+    DCHECK(!owner_window_.WasInvalidated());
+    DCHECK_EQ(handle->owner_window(), nullptr);
     handle->SetOwnerWindow(devtools, owner_window());
+  }
 
   Emit("devtools-opened");
 }
@@ -2332,9 +2336,7 @@ void WebContents::LoadURL(const GURL& url,
     params.load_type = content::NavigationController::LOAD_TYPE_DATA;
   }
 
-  bool reload_ignoring_cache = false;
-  if (options.Get("reloadIgnoringCache", &reload_ignoring_cache) &&
-      reload_ignoring_cache) {
+  if (options.ValueOrDefault("reloadIgnoringCache", false)) {
     params.reload_type = content::ReloadType::BYPASSING_CACHE;
   }
 
@@ -2949,12 +2951,15 @@ void OnGetDeviceNameToUse(base::WeakPtr<content::WebContents> web_contents,
     print_settings.Set(printing::kSettingDpiVertical, dpi.height());
   }
 
-  auto* print_view_manager =
-      PrintViewManagerElectron::FromWebContents(web_contents.get());
+  content::RenderFrameHost* rfh = GetRenderFrameHostToUse(web_contents.get());
+  if (!rfh)
+    return;
+
+  auto* print_view_manager = PrintViewManagerElectron::FromWebContents(
+      content::WebContents::FromRenderFrameHost(rfh));
   if (!print_view_manager)
     return;
 
-  content::RenderFrameHost* rfh = GetRenderFrameHostToUse(web_contents.get());
   print_view_manager->PrintNow(rfh, std::move(print_settings),
                                std::move(print_callback));
 }
@@ -3000,24 +3005,24 @@ void WebContents::Print(gin::Arguments* args) {
   }
 
   if (options.IsEmptyObject()) {
-    auto* print_view_manager =
-        PrintViewManagerElectron::FromWebContents(web_contents());
+    content::RenderFrameHost* rfh = GetRenderFrameHostToUse(web_contents());
+    if (!rfh)
+      return;
+
+    auto* print_view_manager = PrintViewManagerElectron::FromWebContents(
+        content::WebContents::FromRenderFrameHost(rfh));
     if (!print_view_manager)
       return;
 
-    content::RenderFrameHost* rfh = GetRenderFrameHostToUse(web_contents());
     print_view_manager->PrintNow(rfh, std::move(settings), std::move(callback));
     return;
   }
 
   // Set optional silent printing.
-  bool silent = false;
-  options.Get("silent", &silent);
-  settings.Set("silent", silent);
+  settings.Set("silent", options.ValueOrDefault("silent", false));
 
-  bool print_background = false;
-  options.Get("printBackground", &print_background);
-  settings.Set(printing::kSettingShouldPrintBackgrounds, print_background);
+  settings.Set(printing::kSettingShouldPrintBackgrounds,
+               options.ValueOrDefault("printBackground", false));
 
   // Set custom margin settings
   auto margins = gin_helper::Dictionary::CreateEmpty(args->isolate());
@@ -3028,20 +3033,16 @@ void WebContents::Print(gin::Arguments* args) {
     settings.Set(printing::kSettingMarginsType, static_cast<int>(margin_type));
 
     if (margin_type == printing::mojom::MarginType::kCustomMargins) {
-      base::Value::Dict custom_margins;
-      int top = 0;
-      margins.Get("top", &top);
-      custom_margins.Set(printing::kSettingMarginTop, top);
-      int bottom = 0;
-      margins.Get("bottom", &bottom);
-      custom_margins.Set(printing::kSettingMarginBottom, bottom);
-      int left = 0;
-      margins.Get("left", &left);
-      custom_margins.Set(printing::kSettingMarginLeft, left);
-      int right = 0;
-      margins.Get("right", &right);
-      custom_margins.Set(printing::kSettingMarginRight, right);
-      settings.Set(printing::kSettingMarginsCustom, std::move(custom_margins));
+      settings.Set(printing::kSettingMarginsCustom,
+                   base::Value::Dict{}
+                       .Set(printing::kSettingMarginTop,
+                            margins.ValueOrDefault("top", 0))
+                       .Set(printing::kSettingMarginBottom,
+                            margins.ValueOrDefault("bottom", 0))
+                       .Set(printing::kSettingMarginLeft,
+                            margins.ValueOrDefault("left", 0))
+                       .Set(printing::kSettingMarginRight,
+                            margins.ValueOrDefault("right", 0)));
     }
   } else {
     settings.Set(
@@ -3050,46 +3051,37 @@ void WebContents::Print(gin::Arguments* args) {
   }
 
   // Set whether to print color or greyscale
-  bool print_color = true;
-  options.Get("color", &print_color);
-  auto const color_model = print_color ? printing::mojom::ColorModel::kColor
-                                       : printing::mojom::ColorModel::kGray;
-  settings.Set(printing::kSettingColor, static_cast<int>(color_model));
+  settings.Set(printing::kSettingColor,
+               static_cast<int>(options.ValueOrDefault("color", true)
+                                    ? printing::mojom::ColorModel::kColor
+                                    : printing::mojom::ColorModel::kGray));
 
   // Is the orientation landscape or portrait.
-  bool landscape = false;
-  options.Get("landscape", &landscape);
-  settings.Set(printing::kSettingLandscape, landscape);
+  settings.Set(printing::kSettingLandscape,
+               options.ValueOrDefault("landscape", false));
 
   // We set the default to the system's default printer and only update
   // if at the Chromium level if the user overrides.
   // Printer device name as opened by the OS.
-  std::u16string device_name;
-  options.Get("deviceName", &device_name);
+  const auto device_name =
+      options.ValueOrDefault("deviceName", std::u16string{});
 
-  int scale_factor = 100;
-  options.Get("scaleFactor", &scale_factor);
-  settings.Set(printing::kSettingScaleFactor, scale_factor);
+  settings.Set(printing::kSettingScaleFactor,
+               options.ValueOrDefault("scaleFactor", 100));
 
-  int pages_per_sheet = 1;
-  options.Get("pagesPerSheet", &pages_per_sheet);
-  settings.Set(printing::kSettingPagesPerSheet, pages_per_sheet);
+  settings.Set(printing::kSettingPagesPerSheet,
+               options.ValueOrDefault("pagesPerSheet", 1));
 
   // True if the user wants to print with collate.
-  bool collate = true;
-  options.Get("collate", &collate);
-  settings.Set(printing::kSettingCollate, collate);
+  settings.Set(printing::kSettingCollate,
+               options.ValueOrDefault("collate", true));
 
   // The number of individual copies to print
-  int copies = 1;
-  options.Get("copies", &copies);
-  settings.Set(printing::kSettingCopies, copies);
+  settings.Set(printing::kSettingCopies, options.ValueOrDefault("copies", 1));
 
   // Strings to be printed as headers and footers if requested by the user.
-  std::string header;
-  options.Get("header", &header);
-  std::string footer;
-  options.Get("footer", &footer);
+  const auto header = options.ValueOrDefault("header", std::string{});
+  const auto footer = options.ValueOrDefault("footer", std::string{});
 
   if (!(header.empty() && footer.empty())) {
     settings.Set(printing::kSettingHeaderFooterEnabled, true);
@@ -3128,9 +3120,8 @@ void WebContents::Print(gin::Arguments* args) {
   }
 
   // Duplex type user wants to use.
-  printing::mojom::DuplexMode duplex_mode =
-      printing::mojom::DuplexMode::kSimplex;
-  options.Get("duplexMode", &duplex_mode);
+  const auto duplex_mode = options.ValueOrDefault(
+      "duplexMode", printing::mojom::DuplexMode::kSimplex);
   settings.Set(printing::kSettingDuplexMode, static_cast<int>(duplex_mode));
 
   base::Value::Dict media_size;
@@ -3150,14 +3141,11 @@ void WebContents::Print(gin::Arguments* args) {
   }
 
   // Set custom dots per inch (dpi)
-  gin_helper::Dictionary dpi_settings;
-  if (options.Get("dpi", &dpi_settings)) {
-    int horizontal = 72;
-    dpi_settings.Get("horizontal", &horizontal);
-    settings.Set(printing::kSettingDpiHorizontal, horizontal);
-    int vertical = 72;
-    dpi_settings.Get("vertical", &vertical);
-    settings.Set(printing::kSettingDpiVertical, vertical);
+  if (gin_helper::Dictionary dpi; options.Get("dpi", &dpi)) {
+    settings.Set(printing::kSettingDpiHorizontal,
+                 dpi.ValueOrDefault("horizontal", 72));
+    settings.Set(printing::kSettingDpiVertical,
+                 dpi.ValueOrDefault("vertical", 72));
   }
 
   print_task_runner_->PostTaskAndReplyWithResult(
